@@ -9,7 +9,7 @@
 const express = require('express');
 const { sql, getPool } = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
-const { callSpApi } = require('../lib/amazonApi');
+const { callSpApi, paginateSpApi } = require('../lib/amazonApi');
 const { fetchCogBySku } = require('../lib/brandDb');
 const { logAction, reqMeta } = require('../db/queries/audit');
 
@@ -100,7 +100,7 @@ router.get('/amazon-credentials', async (_req, res) => {
  */
 router.post('/amazon/financial-events', async (req, res) => {
   try {
-    const { credentialID, daysBack } = req.body || {};
+    const { credentialID, daysBack, postedAfter: postedAfterOverride } = req.body || {};
     if (!credentialID) return res.status(400).json({ error: 'credentialID is required' });
 
     const ctx = await loadCredential(parseInt(credentialID, 10));
@@ -109,18 +109,48 @@ router.post('/amazon/financial-events', async (req, res) => {
       return res.status(400).json({ error: 'Only Amazon credentials are supported' });
     }
 
-    const days = Math.max(1, Math.min(parseInt(daysBack, 10) || 7, 90));
-    const postedAfter = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    // Determine time window — caller can pass explicit postedAfter (for "Today")
+    // or a daysBack integer (default 7, capped at 90).
+    let postedAfter;
+    if (postedAfterOverride && typeof postedAfterOverride === 'string') {
+      postedAfter = new Date(postedAfterOverride).toISOString();
+    } else {
+      const days = Math.max(1, Math.min(parseInt(daysBack, 10) || 7, 90));
+      postedAfter = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    }
+    const days = Math.max(
+      0.04,
+      Math.round((Date.now() - new Date(postedAfter).getTime()) / (1000 * 60 * 60 * 24) * 10) / 10
+    );
 
-    // SP-API getListFinancialEvents — 0.5 rps rate limit, 30 burst
-    // We'll fetch just the first page; pagination comes later.
-    const path = '/finances/v0/financialEvents?PostedAfter=' + encodeURIComponent(postedAfter)
-               + '&MaxResultsPerPage=100';
-    const apiResp = await callSpApi(ctx, path);
-    const events = (apiResp && apiResp.payload && apiResp.payload.FinancialEvents) || {};
+    // Accumulator across pages
+    const allEvents = {};
+    const addToList = (listName, items) => {
+      if (!items || !items.length) return;
+      if (!allEvents[listName]) allEvents[listName] = [];
+      allEvents[listName].push(...items);
+    };
 
-    const summary = summarizeFinancialEvents(events);
-    const shipmentEvents = compactShipmentEvents(events.ShipmentEventList || []);
+    const buildPath = (nextToken) => {
+      if (nextToken) {
+        return '/finances/v0/financialEvents?NextToken=' + encodeURIComponent(nextToken);
+      }
+      return '/finances/v0/financialEvents?PostedAfter=' + encodeURIComponent(postedAfter)
+           + '&MaxResultsPerPage=100';
+    };
+
+    const { pages, hitCap } = await paginateSpApi(ctx, buildPath, (payload) => {
+      const events = payload.FinancialEvents || {};
+      // Merge all known event lists (any list name ending in EventList)
+      for (const key of Object.keys(events)) {
+        if (key.endsWith('EventList') && Array.isArray(events[key])) {
+          addToList(key, events[key]);
+        }
+      }
+    }, { maxPages: 200, pageDelayMs: 300 });
+
+    const summary = summarizeFinancialEvents(allEvents);
+    const shipmentEvents = compactShipmentEvents(allEvents.ShipmentEventList || []);
 
     // ---- COG lookup from brand's data DB ----
     const skuQtyMap = {}; // sku -> total qty shipped in window
@@ -177,6 +207,8 @@ router.post('/amazon/financial-events', async (req, res) => {
       ...reqMeta(req),
     });
 
+    const totalEvents = Object.values(allEvents).reduce((n, arr) => n + (arr?.length || 0), 0);
+
     res.json({
       brand: ctx.brand,
       daysBack: days,
@@ -187,15 +219,19 @@ router.post('/amazon/financial-events', async (req, res) => {
       profitMarginPct: summary.sales.grossSales > 0
         ? round2((netProfit / summary.sales.grossSales) * 100)
         : null,
-      nextToken: apiResp && apiResp.payload && apiResp.payload.NextEventPublicationDate
-                 ? null : (apiResp && apiResp.payload && apiResp.payload.NextToken) || null,
+      pagination: { pages, totalEvents, hitCap },
       // First 20 shipment events for drill-down detail
       shipmentEvents: shipmentEvents.slice(0, 20),
       rawSample: {
-        ShipmentEventCount: (events.ShipmentEventList || []).length,
-        RefundEventCount: (events.RefundEventList || []).length,
-        ServiceFeeEventCount: (events.ServiceFeeEventList || []).length,
-        AdjustmentEventCount: (events.AdjustmentEventList || []).length,
+        ShipmentEventCount: (allEvents.ShipmentEventList || []).length,
+        RefundEventCount: (allEvents.RefundEventList || []).length,
+        ServiceFeeEventCount: (allEvents.ServiceFeeEventList || []).length,
+        AdjustmentEventCount: (allEvents.AdjustmentEventList || []).length,
+        OtherEventListCounts: Object.fromEntries(
+          Object.entries(allEvents)
+            .filter(([k]) => !['ShipmentEventList','RefundEventList','ServiceFeeEventList','AdjustmentEventList'].includes(k))
+            .map(([k, v]) => [k, v.length])
+        ),
       },
     });
   } catch (e) {

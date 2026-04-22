@@ -104,8 +104,9 @@
             <select id="fCredential"><option value="">Loading…</option></select>
           </div>
           <div>
-            <label style="margin-top:0">Days back</label>
+            <label style="margin-top:0">Window</label>
             <select id="fDays">
+              <option value="today">Today (midnight local)</option>
               <option value="1">Last 24 hours</option>
               <option value="7" selected>Last 7 days</option>
               <option value="14">Last 14 days</option>
@@ -221,18 +222,30 @@
   async function runPull() {
     const btn = document.getElementById('runBtn');
     const credID = document.getElementById('fCredential').value;
-    const days = document.getElementById('fDays').value;
+    const windowVal = document.getElementById('fDays').value;
     if (!credID) return;
     btn.disabled = true;
     btn.textContent = 'Pulling…';
-    document.getElementById('alertBox').innerHTML = '';
+    document.getElementById('alertBox').innerHTML =
+      '<div class="alert alert-info" style="background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.3);color:#93c5fd">'
+      + 'Pulling all pages from Amazon — high-volume windows can take 30–90 seconds. Rate limits apply (0.5 req/sec + 30 burst).'
+      + '</div>';
+
+    const payload = { credentialID: parseInt(credID, 10) };
+    if (windowVal === 'today') {
+      // Midnight today in user's local timezone
+      const now = new Date();
+      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      payload.postedAfter = midnight.toISOString();
+    } else {
+      payload.daysBack = parseInt(windowVal, 10);
+    }
+
     try {
       const { api } = window._SKCAdmin;
-      const data = await api('POST', '/api/debug/amazon/financial-events', {
-        credentialID: parseInt(credID, 10),
-        daysBack: parseInt(days, 10),
-      });
+      const data = await api('POST', '/api/debug/amazon/financial-events', payload);
       lastData = data;
+      document.getElementById('alertBox').innerHTML = '';
       render(data);
     } catch (e) {
       document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
@@ -250,10 +263,27 @@
       fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: s.currencies[0] || 'USD' });
     }
     document.getElementById('results').style.display = '';
-    document.getElementById('resultsHeading').textContent =
-      data.brand.BrandName + ' — last ' + data.daysBack + ' day' + (data.daysBack === 1 ? '' : 's');
+    // Heading — "Today" when the window starts at local midnight
+    const windowStart = new Date(data.postedAfter);
+    const now = new Date();
+    const isTodayWindow = windowStart.getFullYear() === now.getFullYear()
+      && windowStart.getMonth() === now.getMonth()
+      && windowStart.getDate() === now.getDate()
+      && windowStart.getHours() === 0 && windowStart.getMinutes() === 0;
+    const headingWindow = isTodayWindow
+      ? 'today (since midnight)'
+      : ('last ' + data.daysBack + ' day' + (data.daysBack === 1 ? '' : 's'));
+    document.getElementById('resultsHeading').textContent = data.brand.BrandName + ' — ' + headingWindow;
+
+    const pag = data.pagination || {};
+    const pagStr = pag.pages
+      ? (' · ' + pag.totalEvents.toLocaleString() + ' events across ' + pag.pages + ' page' + (pag.pages === 1 ? '' : 's')
+         + (pag.hitCap ? ' (hit 200-page safety cap — some data truncated)' : ''))
+      : '';
     document.getElementById('resultsMeta').textContent =
-      'Currency: ' + (s.currencies.join(', ') || '—') + '  ·  Posted after ' + new Date(data.postedAfter).toLocaleString();
+      'Currency: ' + (s.currencies.join(', ') || '—')
+      + '  ·  Posted after ' + new Date(data.postedAfter).toLocaleString()
+      + pagStr;
 
     // COG callout
     const coCo = document.getElementById('cogCallout');
