@@ -14,6 +14,7 @@ router.get('/', async (_req, res) => {
     const r = await pool.request().query(`
       SELECT c.ConnectorID, c.ConnectorUID, c.Name, c.DisplayName, c.AuthType,
              c.BaseURL, c.DocsURL, c.RunnerType, c.RunnerRef, c.ApiVersion,
+             c.CredentialScope,
              c.AppClientID,
              CAST(CASE WHEN c.AppClientSecret_Enc IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS HasAppClientSecret,
              c.IsActive, c.Notes, c.CreatedAt, c.UpdatedAt,
@@ -37,6 +38,7 @@ router.get('/:uid', async (req, res) => {
       .query(`
         SELECT ConnectorID, ConnectorUID, Name, DisplayName, AuthType, BaseURL, DocsURL,
                DefaultRateLimitRPM, RunnerType, RunnerRef, ApiVersion,
+               CredentialScope,
                AppClientID,
                CAST(CASE WHEN AppClientSecret_Enc IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS HasAppClientSecret,
                IsActive, Notes, CreatedAt, UpdatedAt
@@ -61,7 +63,16 @@ router.post('/', async (req, res) => {
     }
 
     const pool = await getPool();
-    const appClientSecretEnc = b.appClientSecret ? encrypt(b.appClientSecret) : null;
+    const scope = (b.credentialScope || 'APP_AND_BRAND').toUpperCase();
+    if (!['APP_AND_BRAND','BRAND_ONLY','APP_ONLY'].includes(scope)) {
+      return res.status(400).json({ error: 'Invalid credentialScope' });
+    }
+
+    // BRAND_ONLY connectors don't have app-level creds — discard any that were sent.
+    const appClientID = scope === 'BRAND_ONLY' ? null : (b.appClientID || null);
+    const appClientSecretEnc = (scope === 'BRAND_ONLY' || !b.appClientSecret)
+      ? null
+      : encrypt(b.appClientSecret);
 
     const r = await pool.request()
       .input('name', sql.NVarChar(50), b.name.toUpperCase().trim())
@@ -72,19 +83,20 @@ router.post('/', async (req, res) => {
       .input('runnerType', sql.NVarChar(30), b.runnerType || 'GENERIC')
       .input('runnerRef', sql.NVarChar(200), b.runnerRef || null)
       .input('apiVersion', sql.NVarChar(20), b.apiVersion || null)
-      .input('appClientID', sql.NVarChar(200), b.appClientID || null)
+      .input('credentialScope', sql.NVarChar(20), scope)
+      .input('appClientID', sql.NVarChar(200), appClientID)
       .input('appClientSecret', sql.NVarChar(sql.MAX), appClientSecretEnc)
       .input('notes', sql.NVarChar(sql.MAX), b.notes || null)
       .input('createdBy', sql.Int, req.user.userID)
       .input('updatedBy', sql.Int, req.user.userID)
       .query(`
         INSERT INTO admin.Connectors (Name, DisplayName, AuthType, BaseURL, DocsURL,
-                                      RunnerType, RunnerRef, ApiVersion,
+                                      RunnerType, RunnerRef, ApiVersion, CredentialScope,
                                       AppClientID, AppClientSecret_Enc,
                                       Notes, CreatedBy, UpdatedBy)
         OUTPUT INSERTED.ConnectorID, INSERTED.ConnectorUID, INSERTED.Name, INSERTED.DisplayName
         VALUES (@name, @displayName, @authType, @baseURL, @docsURL,
-                @runnerType, @runnerRef, @apiVersion,
+                @runnerType, @runnerRef, @apiVersion, @credentialScope,
                 @appClientID, @appClientSecret,
                 @notes, @createdBy, @updatedBy)
       `);
@@ -118,18 +130,38 @@ router.put('/:uid', async (req, res) => {
   try {
     const b = req.body || {};
 
-    // Secret semantics: undefined = leave alone, '' or null = clear, anything else = rotate.
-    let setSecretFrag = '';
-    const secretProvided = Object.prototype.hasOwnProperty.call(b, 'appClientSecret');
-    let appClientSecretEnc = null;
-    if (secretProvided) {
-      if (b.appClientSecret === '' || b.appClientSecret === null) {
-        appClientSecretEnc = null;
-      } else {
-        appClientSecretEnc = encrypt(b.appClientSecret);
-      }
-      setSecretFrag = ', AppClientSecret_Enc = @appClientSecret';
+    const scope = (b.credentialScope || 'APP_AND_BRAND').toUpperCase();
+    if (!['APP_AND_BRAND','BRAND_ONLY','APP_ONLY'].includes(scope)) {
+      return res.status(400).json({ error: 'Invalid credentialScope' });
     }
+    const isBrandOnly = scope === 'BRAND_ONLY';
+
+    // Secret semantics:
+    //   - BRAND_ONLY always forces AppClientID/Secret to NULL
+    //   - Otherwise: undefined = leave alone, '' or null = clear, anything else = rotate
+    let setSecretFrag = '';
+    let appClientSecretEnc = null;
+    let applyAppClientSecret = false;
+
+    if (isBrandOnly) {
+      // Force clear on BRAND_ONLY regardless of input
+      appClientSecretEnc = null;
+      applyAppClientSecret = true;
+      setSecretFrag = ', AppClientSecret_Enc = @appClientSecret';
+    } else {
+      const secretProvided = Object.prototype.hasOwnProperty.call(b, 'appClientSecret');
+      if (secretProvided) {
+        if (b.appClientSecret === '' || b.appClientSecret === null) {
+          appClientSecretEnc = null;
+        } else {
+          appClientSecretEnc = encrypt(b.appClientSecret);
+        }
+        applyAppClientSecret = true;
+        setSecretFrag = ', AppClientSecret_Enc = @appClientSecret';
+      }
+    }
+
+    const appClientID = isBrandOnly ? null : (b.appClientID || null);
 
     const pool = await getPool();
     const request = pool.request()
@@ -141,29 +173,31 @@ router.put('/:uid', async (req, res) => {
       .input('runnerType', sql.NVarChar(30), b.runnerType || 'GENERIC')
       .input('runnerRef', sql.NVarChar(200), b.runnerRef || null)
       .input('apiVersion', sql.NVarChar(20), b.apiVersion || null)
-      .input('appClientID', sql.NVarChar(200), b.appClientID || null)
+      .input('credentialScope', sql.NVarChar(20), scope)
+      .input('appClientID', sql.NVarChar(200), appClientID)
       .input('isActive', sql.Bit, b.isActive == null ? 1 : (b.isActive ? 1 : 0))
       .input('notes', sql.NVarChar(sql.MAX), b.notes || null)
       .input('updatedBy', sql.Int, req.user.userID);
 
-    if (secretProvided) {
+    if (applyAppClientSecret) {
       request.input('appClientSecret', sql.NVarChar(sql.MAX), appClientSecretEnc);
     }
 
     const r = await request.query(`
         UPDATE admin.Connectors
-        SET DisplayName = @displayName,
-            AuthType    = @authType,
-            BaseURL     = @baseURL,
-            DocsURL     = @docsURL,
-            RunnerType  = @runnerType,
-            RunnerRef   = @runnerRef,
-            ApiVersion  = @apiVersion,
-            AppClientID = @appClientID,
-            IsActive    = @isActive,
-            Notes       = @notes,
-            UpdatedBy   = @updatedBy,
-            UpdatedAt   = SYSUTCDATETIME()
+        SET DisplayName     = @displayName,
+            AuthType        = @authType,
+            BaseURL         = @baseURL,
+            DocsURL         = @docsURL,
+            RunnerType      = @runnerType,
+            RunnerRef       = @runnerRef,
+            ApiVersion      = @apiVersion,
+            CredentialScope = @credentialScope,
+            AppClientID     = @appClientID,
+            IsActive        = @isActive,
+            Notes           = @notes,
+            UpdatedBy       = @updatedBy,
+            UpdatedAt       = SYSUTCDATETIME()
             ${setSecretFrag}
         OUTPUT INSERTED.ConnectorUID, INSERTED.Name, INSERTED.DisplayName
         WHERE ConnectorUID = @uid
@@ -179,7 +213,8 @@ router.put('/:uid', async (req, res) => {
       details: {
         displayName: b.displayName,
         isActive: b.isActive,
-        appClientSecretRotated: secretProvided,
+        credentialScope: scope,
+        appClientSecretRotated: applyAppClientSecret && !isBrandOnly,
       },
       ...reqMeta(req),
     });

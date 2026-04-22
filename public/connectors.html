@@ -78,11 +78,19 @@
         <label>Runner Reference</label>
         <input type="text" id="fRunnerRef" placeholder="AMZ_Report_Runner.dtsx or node:amazon-reports" maxlength="200">
 
-        <div style="margin-top:22px;padding:14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
-          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">App-level credentials (OAuth connectors)</div>
+        <label>Credential scope</label>
+        <select id="fCredentialScope" onchange="onScopeChange()">
+          <option value="APP_AND_BRAND">APP_AND_BRAND — app-level client_id/secret + per-brand tokens (Amazon, Walmart, TikTok)</option>
+          <option value="BRAND_ONLY">BRAND_ONLY — every credential is per-brand (Shopify custom apps, Extensiv)</option>
+          <option value="APP_ONLY">APP_ONLY — all creds at app level (rare)</option>
+        </select>
+        <div class="help-text" id="scopeHelp">Determines whether app-level credentials are shown below and used by runners.</div>
+
+        <div id="appCredsSection" style="margin-top:22px;padding:14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">App-level credentials</div>
           <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
-            For Amazon SP-API: LWA client ID + secret. For Shopify public apps, Walmart, TikTok, Extensiv: corresponding app credentials.
-            Not needed for Shopify custom apps (token is per-brand).
+            For Amazon SP-API: LWA client ID + secret. For Walmart, TikTok, Shopify public apps: corresponding app credentials.
+            Shared across all brand installs of this connector.
           </div>
 
           <label style="margin-top:0">App Client ID</label>
@@ -92,6 +100,14 @@
           <label>App Client Secret</label>
           <input type="password" id="fAppClientSecret" placeholder="type to rotate — existing value stays if blank" autocomplete="off">
           <div class="help-text" id="appSecretStatus"></div>
+        </div>
+
+        <div id="brandOnlyNotice" style="display:none;margin-top:22px;padding:14px;background:rgba(96,165,250,0.08);border-radius:8px;border:1px solid rgba(96,165,250,0.3)">
+          <div style="font-size:12px;font-weight:600;color:var(--blue);margin-bottom:4px">Brand-scoped connector</div>
+          <div style="font-size:12px;color:var(--text-muted)">
+            All credentials for this connector are per-brand — there are no app-level credentials to configure here.
+            Add credentials per brand on the <a href="/credentials.html">Credentials</a> page.
+          </div>
         </div>
 
         <label>Notes</label>
@@ -134,7 +150,7 @@
         <td class="mono" style="color:var(--text-muted)">${esc(c.RunnerType || '—')}</td>
         <td class="mono" style="color:var(--text-muted)">${esc(c.ApiVersion || '—')}</td>
         <td class="mono">${c.EndpointCount}</td>
-        <td>${c.IsActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-muted">Inactive</span>'}</td>
+        <td>${c.IsActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-muted">Inactive</span>'}${c.CredentialScope === 'BRAND_ONLY' ? '<br><span class="badge badge-blue" style="margin-top:3px">Brand-scoped</span>' : ''}</td>
         <td style="text-align:right">
           <button class="btn btn-small btn-secondary" onclick="openModal('${c.ConnectorUID}')">Edit</button>
           ${c.IsActive ? `<button class="btn btn-small btn-danger" onclick="deactivate('${c.ConnectorUID}','${esc(c.Name)}')">Deactivate</button>` : ''}
@@ -161,6 +177,7 @@
         document.getElementById('fApiVersion').value = c.ApiVersion || '';
         document.getElementById('fRunnerType').value = c.RunnerType || 'GENERIC';
         document.getElementById('fRunnerRef').value = c.RunnerRef || '';
+        document.getElementById('fCredentialScope').value = c.CredentialScope || 'APP_AND_BRAND';
         document.getElementById('fAppClientID').value = c.AppClientID || '';
         document.getElementById('appSecretStatus').innerHTML = c.HasAppClientSecret
           ? '<span style="color:var(--green)">✓ Secret is set.</span> Type a new value to rotate; leave blank to keep.'
@@ -170,9 +187,24 @@
     } else {
       document.getElementById('modalTitle').textContent = 'New Connector';
       document.getElementById('fName').disabled = false;
+      document.getElementById('fCredentialScope').value = 'APP_AND_BRAND';
       document.getElementById('appSecretStatus').textContent = '';
     }
+    onScopeChange();
     modal.classList.add('show');
+  }
+
+  function onScopeChange() {
+    const scope = document.getElementById('fCredentialScope').value;
+    const appSection = document.getElementById('appCredsSection');
+    const brandNotice = document.getElementById('brandOnlyNotice');
+    if (scope === 'BRAND_ONLY') {
+      appSection.style.display = 'none';
+      brandNotice.style.display = 'block';
+    } else {
+      appSection.style.display = 'block';
+      brandNotice.style.display = 'none';
+    }
   }
   function closeModal() { document.getElementById('modal').classList.remove('show'); }
 
@@ -183,6 +215,9 @@
     try {
       const { api } = window._SKCAdmin;
       const uid = document.getElementById('fConnectorUID').value;
+      const scope = document.getElementById('fCredentialScope').value;
+      const isBrandOnly = scope === 'BRAND_ONLY';
+
       const payload = {
         name: document.getElementById('fName').value,
         displayName: document.getElementById('fDisplayName').value,
@@ -192,12 +227,15 @@
         apiVersion: document.getElementById('fApiVersion').value || null,
         runnerType: document.getElementById('fRunnerType').value,
         runnerRef: document.getElementById('fRunnerRef').value || null,
-        appClientID: document.getElementById('fAppClientID').value || null,
+        credentialScope: scope,
+        appClientID: isBrandOnly ? null : (document.getElementById('fAppClientID').value || null),
         notes: document.getElementById('fNotes').value || null,
       };
-      // Only include app secret if user typed one (preserves existing value otherwise)
-      const appSecret = document.getElementById('fAppClientSecret').value;
-      if (appSecret) payload.appClientSecret = appSecret;
+      // Only include app secret if scope allows it AND user typed one (preserves existing value otherwise)
+      if (!isBrandOnly) {
+        const appSecret = document.getElementById('fAppClientSecret').value;
+        if (appSecret) payload.appClientSecret = appSecret;
+      }
 
       if (uid) {
         await api('PUT', '/api/connectors/' + uid, payload);
