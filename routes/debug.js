@@ -105,6 +105,7 @@ router.post('/amazon/financial-events', async (req, res) => {
       daysBack,
       postedAfter: postedAfterOverride,
       postedBefore: postedBeforeOverride,
+      tzOffsetMinutes, // optional, from browser's new Date().getTimezoneOffset()
     } = req.body || {};
     if (!credentialID) return res.status(400).json({ error: 'credentialID is required' });
 
@@ -162,6 +163,9 @@ router.post('/amazon/financial-events', async (req, res) => {
 
     const summary = summarizeFinancialEvents(allEvents);
     const shipmentEvents = compactShipmentEvents(allEvents.ShipmentEventList || []);
+    // Pre-aggregate into daily buckets in the user's local timezone
+    const tzOff = Number.isFinite(tzOffsetMinutes) ? tzOffsetMinutes : 0;
+    const dailyBreakdown = buildDailyBreakdown(allEvents, tzOff);
 
     // Compute the actual date range covered (useful when truncated)
     let earliestPosted = null, latestPosted = null;
@@ -230,6 +234,23 @@ router.post('/amazon/financial-events', async (req, res) => {
 
     const totalEvents = Object.values(allEvents).reduce((n, arr) => n + (arr?.length || 0), 0);
 
+    // Enrich daily breakdown with per-day COG using the SKU qty map from shipments
+    // (We pull COG once for all SKUs, then allocate by day.)
+    const skuPerDayQty = buildSkuPerDayQty(allEvents.ShipmentEventList || [], tzOff);
+    for (const day of dailyBreakdown) {
+      let dayCog = 0;
+      let dayMissing = 0;
+      const skus = skuPerDayQty[day.date] || {};
+      for (const [sku, qty] of Object.entries(skus)) {
+        const unit = cogResult.cogBySku[sku];
+        if (unit != null) dayCog += unit * qty;
+        else dayMissing += qty;
+      }
+      day.cog = round2(dayCog);
+      day.cogMissingUnits = dayMissing;
+      day.netProfit = round2(day.netProceeds - dayCog);
+    }
+
     res.json({
       brand: ctx.brand,
       daysBack: days,
@@ -238,6 +259,7 @@ router.post('/amazon/financial-events', async (req, res) => {
       summary,
       cog: cogInfo,
       netProfit,
+      dailyBreakdown,
       profitMarginPct: summary.sales.grossSales > 0
         ? round2((netProfit / summary.sales.grossSales) * 100)
         : null,
@@ -472,5 +494,154 @@ function compactShipmentEvents(list) {
 
 function round2(n) { return Math.round((n + Number.EPSILON) * 100) / 100; }
 function round2Obj(o) { const out = {}; for (const k in o) out[k] = round2(o[k]); return out; }
+
+/**
+ * Convert a timestamp into YYYY-MM-DD in a given timezone (using offset minutes
+ * as returned by `new Date().getTimezoneOffset()`, where US Central = 300-360).
+ */
+function toLocalDateString(isoTimestamp, tzOffsetMinutes) {
+  if (!isoTimestamp) return null;
+  const t = new Date(isoTimestamp).getTime();
+  const shifted = new Date(t - (tzOffsetMinutes || 0) * 60 * 1000);
+  const y = shifted.getUTCFullYear();
+  const m = String(shifted.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(shifted.getUTCDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
+/**
+ * Group every financial-event list into per-day buckets in the user's local
+ * timezone. Each bucket carries the same shape the summary uses, just scoped
+ * to one day.
+ */
+function buildDailyBreakdown(allEvents, tzOffsetMinutes) {
+  const buckets = {}; // date -> accumulator
+  const ensureBucket = (date) => {
+    if (!buckets[date]) {
+      buckets[date] = {
+        date,
+        orderIds: new Set(),
+        shipmentCount: 0,
+        grossSales: 0,
+        productRevenue: 0,
+        shippingRevenue: 0,
+        tax: 0,
+        promotionDiscount: 0,
+        commission: 0,
+        fba: 0,
+        otherFees: 0,
+        refunds: 0,
+        refundCount: 0,
+        serviceFees: 0,
+        adjustments: 0,
+      };
+    }
+    return buckets[date];
+  };
+  const valOf = (amt) => (amt && typeof amt.CurrencyAmount === 'number') ? amt.CurrencyAmount : 0;
+
+  for (const ev of allEvents.ShipmentEventList || []) {
+    const date = toLocalDateString(ev.PostedDate, tzOffsetMinutes);
+    if (!date) continue;
+    const b = ensureBucket(date);
+    b.shipmentCount++;
+    if (ev.AmazonOrderId) b.orderIds.add(ev.AmazonOrderId);
+    for (const item of ev.ShipmentItemList || []) {
+      for (const c of item.ItemChargeList || []) {
+        const a = valOf(c.ChargeAmount);
+        switch (c.ChargeType) {
+          case 'Principal': b.productRevenue += a; b.grossSales += a; break;
+          case 'Shipping':
+          case 'ShippingCharge': b.shippingRevenue += a; b.grossSales += a; break;
+          case 'GiftWrap': b.grossSales += a; break;
+          case 'Tax':
+          case 'ShippingTax':
+          case 'GiftWrapTax': b.tax += a; break;
+          case 'Discount':
+          case 'ShippingDiscount':
+          case 'PromotionAmount': b.promotionDiscount += a; break;
+        }
+      }
+      for (const f of item.ItemFeeList || []) {
+        const a = valOf(f.FeeAmount);
+        if (f.FeeType === 'Commission') b.commission += a;
+        else if (/^FBA/.test(f.FeeType)) b.fba += a;
+        else b.otherFees += a;
+      }
+    }
+  }
+
+  for (const ev of allEvents.RefundEventList || []) {
+    const date = toLocalDateString(ev.PostedDate, tzOffsetMinutes);
+    if (!date) continue;
+    const b = ensureBucket(date);
+    b.refundCount++;
+    for (const item of ev.ShipmentItemAdjustmentList || []) {
+      for (const c of item.ItemChargeAdjustmentList || []) b.refunds += valOf(c.ChargeAmount);
+      for (const f of item.ItemFeeAdjustmentList || [])    b.refunds += valOf(f.FeeAmount);
+    }
+  }
+
+  for (const ev of allEvents.ServiceFeeEventList || []) {
+    const date = toLocalDateString(ev.PostedDate, tzOffsetMinutes);
+    if (!date) continue;
+    const b = ensureBucket(date);
+    for (const f of ev.FeeList || []) b.serviceFees += valOf(f.FeeAmount);
+  }
+
+  for (const ev of allEvents.AdjustmentEventList || []) {
+    const date = toLocalDateString(ev.PostedDate, tzOffsetMinutes);
+    if (!date) continue;
+    const b = ensureBucket(date);
+    b.adjustments += valOf(ev.AdjustmentAmount);
+  }
+
+  return Object.values(buckets)
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((b) => {
+      const totalSaleFees = b.commission + b.fba + b.otherFees;
+      const netProceeds = b.grossSales + b.tax + b.promotionDiscount + totalSaleFees + b.refunds + b.serviceFees + b.adjustments;
+      return {
+        date: b.date,
+        orderCount: b.orderIds.size,
+        shipmentCount: b.shipmentCount,
+        productRevenue: round2(b.productRevenue),
+        shippingRevenue: round2(b.shippingRevenue),
+        grossSales: round2(b.grossSales),
+        tax: round2(b.tax),
+        promotionDiscount: round2(b.promotionDiscount),
+        commission: round2(b.commission),
+        fba: round2(b.fba),
+        otherFees: round2(b.otherFees),
+        totalSaleFees: round2(totalSaleFees),
+        refunds: round2(b.refunds),
+        refundCount: b.refundCount,
+        serviceFees: round2(b.serviceFees),
+        adjustments: round2(b.adjustments),
+        netProceeds: round2(netProceeds),
+        // cog + netProfit are filled in by the caller after COG lookup
+        cog: 0,
+        cogMissingUnits: 0,
+        netProfit: round2(netProceeds),
+      };
+    });
+}
+
+/**
+ * For per-day COG allocation: returns { 'YYYY-MM-DD': { sku: qty, ... } }.
+ */
+function buildSkuPerDayQty(shipmentEvents, tzOffsetMinutes) {
+  const out = {};
+  for (const ev of shipmentEvents) {
+    const date = toLocalDateString(ev.PostedDate, tzOffsetMinutes);
+    if (!date) continue;
+    if (!out[date]) out[date] = {};
+    for (const item of ev.ShipmentItemList || []) {
+      if (!item.SellerSKU) continue;
+      out[date][item.SellerSKU] = (out[date][item.SellerSKU] || 0) + (item.QuantityShipped || 0);
+    }
+  }
+  return out;
+}
 
 module.exports = router;

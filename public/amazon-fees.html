@@ -150,6 +150,27 @@
           </div>
         </div>
 
+        <h2 style="margin-top:22px">Daily breakdown</h2>
+        <div class="subtitle" id="dailySubtitle">One row per day (local timezone). Server-aggregated from the raw financial events.</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th style="text-align:right">Orders</th>
+                <th style="text-align:right">Gross Sales</th>
+                <th style="text-align:right">Amazon Fees</th>
+                <th style="text-align:right">Service Fees</th>
+                <th style="text-align:right">Refunds</th>
+                <th style="text-align:right">COG</th>
+                <th style="text-align:right">Net Profit</th>
+              </tr>
+            </thead>
+            <tbody id="dailyBody"></tbody>
+            <tfoot id="dailyFoot"></tfoot>
+          </table>
+        </div>
+
         <h2 style="margin-top:22px">Profit waterfall</h2>
         <div class="subtitle">Click any row with a <span style="color:var(--orange)">▸</span> to expand.</div>
         <div class="waterfall" id="waterfall"></div>
@@ -333,7 +354,10 @@
       + 'Pulling pages from Amazon — rate limited at 0.5 req/sec after the initial burst. May take up to ~60 sec on high-volume windows.'
       + '</div>';
 
-    const payload = { credentialID: parseInt(credID, 10) };
+    const payload = {
+      credentialID: parseInt(credID, 10),
+      tzOffsetMinutes: new Date().getTimezoneOffset(),
+    };
     if (w.postedAfter) payload.postedAfter = w.postedAfter;
     if (w.postedBefore) payload.postedBefore = w.postedBefore;
     if (w.daysBack) payload.daysBack = w.daysBack;
@@ -447,6 +471,12 @@
     const marginStr = data.profitMarginPct != null ? data.profitMarginPct + '% margin' : '';
     document.getElementById('mNetProfitSub').textContent = marginStr + (cog.available ? '' : '  ·  (excl. COG)');
 
+    // Daily breakdown table
+    renderDailyBreakdown(data.dailyBreakdown || []);
+
+    // Daily breakdown table
+    renderDailyBreakdown(data.dailyBreakdown || []);
+
     // Waterfall
     renderWaterfall(s, cog, netProfit);
 
@@ -486,6 +516,58 @@
     }
 
     document.getElementById('rawSample').textContent = JSON.stringify(data.rawSample, null, 2);
+  }
+
+  /* ---------- Daily breakdown ---------- */
+  function renderDailyBreakdown(days) {
+    const body = document.getElementById('dailyBody');
+    const foot = document.getElementById('dailyFoot');
+    if (!days.length) {
+      body.innerHTML = '<tr><td colspan="8" class="empty-state">No daily activity in the selected window.</td></tr>';
+      foot.innerHTML = '';
+      return;
+    }
+    body.innerHTML = days.map(d => {
+      const amazonFees = d.totalSaleFees;
+      const cogMissing = d.cogMissingUnits > 0
+        ? ` <span style="color:var(--red);font-size:10px" title="${d.cogMissingUnits} units shipped without COG">⚠</span>`
+        : '';
+      return `
+        <tr>
+          <td class="mono">${esc(d.date)}</td>
+          <td class="mono" style="text-align:right">${d.orderCount}</td>
+          <td class="mono" style="text-align:right">${fmt.format(d.grossSales)}</td>
+          <td class="mono" style="text-align:right;color:var(--red)">${fmt.format(amazonFees)}</td>
+          <td class="mono" style="text-align:right;color:${d.serviceFees < 0 ? 'var(--red)' : 'var(--text-muted)'}">${fmt.format(d.serviceFees)}</td>
+          <td class="mono" style="text-align:right;color:${d.refunds < 0 ? 'var(--red)' : 'var(--text-muted)'}">${fmt.format(d.refunds)}</td>
+          <td class="mono" style="text-align:right;color:var(--red)">${d.cog > 0 ? fmt.format(-d.cog) : '—'}${cogMissing}</td>
+          <td class="mono" style="text-align:right;color:${d.netProfit >= 0 ? 'var(--green)' : 'var(--red)'};font-weight:600">${fmt.format(d.netProfit)}</td>
+        </tr>
+      `;
+    }).join('');
+
+    // Footer totals
+    const tot = days.reduce((a, d) => ({
+      orderCount: a.orderCount + d.orderCount,
+      grossSales: a.grossSales + d.grossSales,
+      totalSaleFees: a.totalSaleFees + d.totalSaleFees,
+      serviceFees: a.serviceFees + d.serviceFees,
+      refunds: a.refunds + d.refunds,
+      cog: a.cog + d.cog,
+      netProfit: a.netProfit + d.netProfit,
+    }), { orderCount: 0, grossSales: 0, totalSaleFees: 0, serviceFees: 0, refunds: 0, cog: 0, netProfit: 0 });
+    foot.innerHTML = `
+      <tr style="background:var(--surface2);font-weight:700">
+        <td>Total (${days.length} day${days.length === 1 ? '' : 's'})</td>
+        <td class="mono" style="text-align:right">${tot.orderCount}</td>
+        <td class="mono" style="text-align:right">${fmt.format(tot.grossSales)}</td>
+        <td class="mono" style="text-align:right;color:var(--red)">${fmt.format(tot.totalSaleFees)}</td>
+        <td class="mono" style="text-align:right;color:${tot.serviceFees < 0 ? 'var(--red)' : 'var(--text-muted)'}">${fmt.format(tot.serviceFees)}</td>
+        <td class="mono" style="text-align:right;color:${tot.refunds < 0 ? 'var(--red)' : 'var(--text-muted)'}">${fmt.format(tot.refunds)}</td>
+        <td class="mono" style="text-align:right;color:var(--red)">${tot.cog > 0 ? fmt.format(-tot.cog) : '—'}</td>
+        <td class="mono" style="text-align:right;color:${tot.netProfit >= 0 ? 'var(--green)' : 'var(--red)'}">${fmt.format(tot.netProfit)}</td>
+      </tr>
+    `;
   }
 
   /* ---------- Waterfall rendering ---------- */
