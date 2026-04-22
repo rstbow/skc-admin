@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKU Compass Admin — Cost of Goods</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/tokens.css">
+<style>
+  .money { font-family: 'Space Mono', monospace; }
+  .no-cog { color: var(--red); }
+  .stat-mini {
+    display: inline-block;
+    padding: 4px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-right: 8px;
+    font-size: 12px;
+  }
+  .stat-mini strong { font-family: 'Space Mono', monospace; color: var(--text); }
+</style>
+</head>
+<body data-page="cog">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Cost of Goods</div>
+        <div class="topbar-sub">Browse COG per brand — queries <code>tbl_PPA_IMS_SKU</code> via the <strong>SKU_COMPASS</strong> connector</div>
+      </div>
+    </div>
+    <div class="page-content">
+      <div id="alertBox"></div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 120px;gap:14px;align-items:end">
+          <div>
+            <label style="margin-top:0">Brand</label>
+            <select id="fBrand"><option value="">Loading…</option></select>
+            <div class="help-text" id="brandHint"></div>
+          </div>
+          <div>
+            <label style="margin-top:0">Search SKU / ASIN / Product</label>
+            <input type="text" id="fSearch" placeholder="e.g. ABC123 or partial product name">
+          </div>
+          <div>
+            <button class="btn" id="runBtn" onclick="runQuery()">Load COG</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="results" style="display:none">
+        <div id="stats" style="margin-bottom:14px"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>ASIN</th>
+                <th>Product</th>
+                <th style="text-align:right">Unit COG</th>
+                <th>Supplier</th>
+                <th style="text-align:right">Lead Time</th>
+                <th style="text-align:right">Safety Stock</th>
+              </tr>
+            </thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+
+<script src="/sidebar.js"></script>
+<script>
+  let brands = [];
+  let fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+  document.addEventListener('sidebarReady', async () => {
+    try {
+      const { api } = window._SKCAdmin;
+      const { brands: bs } = await api('GET', '/api/debug/brands-with-conn');
+      brands = bs;
+      const sel = document.getElementById('fBrand');
+      if (!brands.length) {
+        sel.innerHTML = '<option value="">No active brands yet.</option>';
+        document.getElementById('runBtn').disabled = true;
+        return;
+      }
+      sel.innerHTML = brands.map(b => `
+        <option value="${b.BrandUID}" ${b.HasConnString ? '' : 'disabled'}>
+          ${esc(b.BrandName)} ${b.HasConnString ? '' : ' — no DataDbConnString set'}
+        </option>
+      `).join('');
+      sel.addEventListener('change', updateBrandHint);
+      updateBrandHint();
+    } catch (e) {
+      document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
+    }
+  });
+
+  function updateBrandHint() {
+    const uid = document.getElementById('fBrand').value;
+    const b = brands.find(x => x.BrandUID === uid);
+    const hint = document.getElementById('brandHint');
+    if (!b) {
+      hint.textContent = '';
+    } else if (!b.HasConnString) {
+      hint.innerHTML = '<span style="color:var(--red)">No DataDbConnString set.</span> Configure it on the <a href="/brands.html">Brands page</a> first.';
+    } else {
+      hint.innerHTML = '<span style="color:var(--green)">✓ Ready.</span> Connection configured.';
+    }
+  }
+
+  async function runQuery() {
+    const brandUID = document.getElementById('fBrand').value;
+    const search = document.getElementById('fSearch').value;
+    if (!brandUID) return;
+
+    const btn = document.getElementById('runBtn');
+    btn.disabled = true;
+    btn.textContent = 'Loading…';
+    document.getElementById('alertBox').innerHTML = '';
+
+    try {
+      const { api } = window._SKCAdmin;
+      const data = await api('POST', '/api/debug/sku-compass/cog', {
+        brandUID,
+        search: search || null,
+        limit: 5000,
+      });
+
+      if (data.unavailableReason) {
+        document.getElementById('alertBox').innerHTML =
+          '<div class="callout callout-warn" style="padding:11px 14px;border-radius:8px;background:rgba(251,191,36,0.08);border:1px solid rgba(251,191,36,0.3);color:#fcd34d">'
+          + '⚠ ' + esc(data.unavailableReason) + '</div>';
+        document.getElementById('results').style.display = 'none';
+        return;
+      }
+
+      render(data);
+    } catch (e) {
+      document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
+      document.getElementById('results').style.display = 'none';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Load COG';
+    }
+  }
+
+  function render(data) {
+    document.getElementById('results').style.display = '';
+
+    // Stats
+    const rows = data.rows || [];
+    const withCog = rows.filter(r => r.cog != null);
+    const withoutCog = rows.filter(r => r.cog == null);
+    const avgCog = withCog.length ? withCog.reduce((a, r) => a + r.cog, 0) / withCog.length : 0;
+    const minCog = withCog.length ? Math.min(...withCog.map(r => r.cog)) : 0;
+    const maxCog = withCog.length ? Math.max(...withCog.map(r => r.cog)) : 0;
+
+    document.getElementById('stats').innerHTML = `
+      <span class="stat-mini">Showing <strong>${rows.length.toLocaleString()}</strong> of <strong>${(data.total || rows.length).toLocaleString()}</strong> SKUs</span>
+      <span class="stat-mini"><strong>${withCog.length.toLocaleString()}</strong> with COG</span>
+      <span class="stat-mini" style="color:var(--red)"><strong>${withoutCog.length.toLocaleString()}</strong> missing COG</span>
+      ${withCog.length ? `<span class="stat-mini">Avg COG: <strong>${fmt.format(avgCog)}</strong></span>
+      <span class="stat-mini">Range: <strong>${fmt.format(minCog)}</strong>–<strong>${fmt.format(maxCog)}</strong></span>` : ''}
+      <span class="stat-mini">COG column: <strong>${esc(data.cogColumn || '—')}</strong></span>
+    `;
+
+    // Table
+    const tbody = document.getElementById('tbody');
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No SKUs match.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rows.map(r => `
+      <tr>
+        <td class="mono">${esc(r.sku)}</td>
+        <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc(r.asin || '—')}</td>
+        <td style="font-size:12px">${esc(r.productName || '—')}</td>
+        <td class="mono" style="text-align:right">${r.cog != null ? fmt.format(r.cog) : '<span class="no-cog">—</span>'}</td>
+        <td style="font-size:12px;color:var(--text-muted)">${esc(r.supplier || '—')}</td>
+        <td class="mono" style="text-align:right;color:var(--text-muted)">${r.leadTime ?? '—'}</td>
+        <td class="mono" style="text-align:right;color:var(--text-muted)">${r.safetyStock ?? '—'}</td>
+      </tr>
+    `).join('');
+  }
+
+  // Enter key on search triggers load
+  document.getElementById('fSearch').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') runQuery();
+  });
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>

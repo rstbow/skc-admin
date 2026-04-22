@@ -10,7 +10,7 @@ const express = require('express');
 const { sql, getPool } = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
 const { callSpApi, paginateSpApi } = require('../lib/amazonApi');
-const { fetchCogBySku } = require('../lib/brandDb');
+const { fetchCogBySku, fetchAllCog } = require('../lib/brandDb');
 const { logAction, reqMeta } = require('../db/queries/audit');
 
 const router = express.Router();
@@ -66,6 +66,65 @@ async function loadCredential(credentialID) {
     },
   };
 }
+
+/**
+ * GET /api/debug/brands-with-conn
+ * Returns active brands that have DataDbConnString populated — the prerequisite
+ * for the SKU_COMPASS connector (COG, etc.) to work.
+ */
+router.get('/brands-with-conn', async (_req, res) => {
+  try {
+    const pool = await getPool();
+    const r = await pool.request().query(`
+      SELECT BrandUID, BrandName, BrandSlug,
+             CASE WHEN DataDbConnString IS NOT NULL THEN 1 ELSE 0 END AS HasConnString
+      FROM admin.Brands
+      WHERE IsActive = 1
+      ORDER BY BrandName
+    `);
+    res.json({ brands: r.recordset });
+  } catch (e) {
+    console.error('[debug/brands-with-conn]', e);
+    res.status(500).json({ error: 'Failed to load brands' });
+  }
+});
+
+/**
+ * POST /api/debug/sku-compass/cog
+ * Body: { brandUID, search?, limit? }
+ * Queries tbl_PPA_IMS_SKU on the brand's data DB and returns SKU + COG rows.
+ * Implements the SKC_COG endpoint registered in admin.Endpoints.
+ */
+router.post('/sku-compass/cog', async (req, res) => {
+  try {
+    const { brandUID, search, limit } = req.body || {};
+    if (!brandUID) return res.status(400).json({ error: 'brandUID is required' });
+
+    const result = await fetchAllCog(brandUID, {
+      search: search && typeof search === 'string' ? search.trim() : null,
+      limit: limit ? parseInt(limit, 10) : 5000,
+    });
+
+    await logAction({
+      userID: req.user.userID,
+      action: 'DEBUG_SKU_COMPASS_COG',
+      entityType: 'Brand',
+      entityID: brandUID,
+      details: {
+        rowsReturned: result.rows.length,
+        total: result.total,
+        cogColumn: result.cogColumn,
+        unavailable: !!result.unavailableReason,
+      },
+      ...reqMeta(req),
+    });
+
+    res.json(result);
+  } catch (e) {
+    console.error('[debug/sku-compass/cog]', e);
+    res.status(500).json({ error: 'Failed to fetch COG: ' + e.message });
+  }
+});
 
 /**
  * GET /api/debug/amazon-credentials
