@@ -119,6 +119,12 @@
             <button class="btn" id="runBtn" onclick="runPull()">Pull fees</button>
           </div>
         </div>
+        <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center">
+          <button class="btn btn-secondary" id="persistBtn" onclick="runPersist()" title="Run the same window and write results to raw.amz_financial_events">
+            ↓ Persist to DB (Phase 3 runner)
+          </button>
+          <span class="help-text" id="persistStatus" style="margin:0"></span>
+        </div>
       </div>
 
       <div id="results" style="display:none">
