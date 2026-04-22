@@ -8,47 +8,90 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/tokens.css">
 <style>
-  .money { font-family: 'Space Mono', monospace; font-size: 14px; }
+  .money { font-family: 'Space Mono', monospace; }
   .money.negative { color: var(--red); }
   .money.positive { color: var(--green); }
-  .fee-grid {
+  .money.muted { color: var(--text-muted); }
+
+  /* Stat cards */
+  .hero-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
     gap: 14px;
+    margin-bottom: 20px;
   }
-  .fee-card {
+  .hero-card {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 16px 18px;
   }
-  .fee-label {
-    font-size: 11px; color: var(--text-muted);
-    text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px;
+  .hero-card.primary {
+    background: linear-gradient(135deg, rgba(249,115,22,0.10), rgba(249,115,22,0.02));
+    border-color: rgba(249,115,22,0.35);
   }
-  .fee-value {
-    font-family: 'Space Mono', monospace;
-    font-size: 22px; font-weight: 700;
+  .hero-label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px; }
+  .hero-value { font-family: 'Space Mono', monospace; font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+  .hero-card.primary .hero-value { font-size: 28px; color: var(--orange); }
+  .hero-sub { font-size: 11px; color: var(--text-dim); margin-top: 4px; font-family: 'Space Mono', monospace; }
+
+  /* Waterfall */
+  .waterfall {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
   }
-  .fee-sub {
-    font-size: 11px; color: var(--text-dim); margin-top: 4px;
-    font-family: 'Space Mono', monospace;
+  .wf-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 14px;
+    padding: 11px 18px;
+    border-bottom: 1px solid var(--border);
   }
-  .breakdown-row {
-    display: flex; justify-content: space-between;
-    padding: 6px 0; border-bottom: 1px solid var(--border);
+  .wf-row:last-child { border-bottom: none; }
+  .wf-row:hover { background: var(--surface2); }
+  .wf-row.expandable { cursor: pointer; }
+  .wf-row.expandable:hover .wf-label::before { color: var(--orange); }
+  .wf-row.subtotal {
+    background: var(--surface2);
+    font-weight: 600;
+  }
+  .wf-row.total {
+    background: rgba(249,115,22,0.06);
+    border-top: 1px solid rgba(249,115,22,0.2);
+    font-weight: 700;
+  }
+  .wf-row.total .wf-label { color: var(--orange); }
+  .wf-row.total .wf-amount { font-size: 18px; }
+  .wf-label { font-size: 13px; color: var(--text); display: flex; align-items: center; gap: 6px; }
+  .wf-label.muted { color: var(--text-muted); font-size: 12px; padding-left: 20px; }
+  .wf-label.indent { padding-left: 20px; color: var(--text-muted); font-size: 12px; }
+  .wf-amount { font-family: 'Space Mono', monospace; font-size: 14px; text-align: right; }
+  .wf-chevron { width: 14px; font-size: 11px; color: var(--text-dim); transition: transform 0.15s; }
+  .wf-row.expanded .wf-chevron { transform: rotate(90deg); color: var(--orange); }
+  .wf-detail { display: none; }
+  .wf-detail.show { display: block; }
+
+  .badge-inline { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 10px; font-weight: 600; letter-spacing: 0.3px; margin-left: 6px; }
+
+  .callout {
+    padding: 11px 14px;
+    border-radius: 8px;
     font-size: 12px;
+    margin-bottom: 14px;
   }
-  .breakdown-row:last-child { border-bottom: none; }
-  .breakdown-row .mono { font-size: 12px; }
+  .callout-info  { background: rgba(96,165,250,0.08);  border: 1px solid rgba(96,165,250,0.3); color: #93c5fd; }
+  .callout-warn  { background: rgba(251,191,36,0.08);  border: 1px solid rgba(251,191,36,0.3); color: #fcd34d; }
 </style>
 </head>
 <body data-page="amazon-fees">
   <main class="main">
     <div class="topbar">
       <div>
-        <div class="topbar-title">Amazon Fees</div>
-        <div class="topbar-sub">What Amazon is charging for recent sales — live from the SP-API Financial Events endpoint</div>
+        <div class="topbar-title">Amazon Fees & Profit</div>
+        <div class="topbar-sub">Live from SP-API Financial Events · COG joined from brand data DB</div>
       </div>
     </div>
     <div class="page-content">
@@ -58,9 +101,7 @@
         <div style="display:grid;grid-template-columns:1fr 180px 120px;gap:14px;align-items:end">
           <div>
             <label style="margin-top:0">Credential</label>
-            <select id="fCredential">
-              <option value="">Loading…</option>
-            </select>
+            <select id="fCredential"><option value="">Loading…</option></select>
           </div>
           <div>
             <label style="margin-top:0">Days back</label>
@@ -77,81 +118,69 @@
             <button class="btn" id="runBtn" onclick="runPull()">Pull fees</button>
           </div>
         </div>
-        <div class="help-text" style="margin-top:10px">
-          Calls <code>GET /finances/v0/financialEvents</code> and summarizes the response. First page only (100 events)
-          — pagination comes with the Phase 3 runner.
-        </div>
       </div>
 
       <div id="results" style="display:none">
         <h2 id="resultsHeading" style="margin-bottom:4px"></h2>
         <div class="subtitle" id="resultsMeta"></div>
 
-        <div class="fee-grid" style="margin:18px 0 22px">
-          <div class="fee-card">
-            <div class="fee-label">Gross Sales</div>
-            <div class="fee-value" id="mGross">—</div>
-            <div class="fee-sub" id="mGrossSub"></div>
+        <div id="cogCallout"></div>
+
+        <div class="hero-grid">
+          <div class="hero-card">
+            <div class="hero-label">Gross Sales</div>
+            <div class="hero-value" id="mGross">—</div>
+            <div class="hero-sub" id="mGrossSub"></div>
           </div>
-          <div class="fee-card">
-            <div class="fee-label">Total Amazon Fees</div>
-            <div class="fee-value money negative" id="mFees">—</div>
-            <div class="fee-sub" id="mFeesSub">&mdash;% of gross sales</div>
+          <div class="hero-card">
+            <div class="hero-label">Amazon Fees</div>
+            <div class="hero-value money negative" id="mFees">—</div>
+            <div class="hero-sub" id="mFeesSub"></div>
           </div>
-          <div class="fee-card">
-            <div class="fee-label">Net Proceeds</div>
-            <div class="fee-value" id="mNet">—</div>
-            <div class="fee-sub">After fees, refunds, adjustments</div>
+          <div class="hero-card">
+            <div class="hero-label">Cost of Goods</div>
+            <div class="hero-value money negative" id="mCog">—</div>
+            <div class="hero-sub" id="mCogSub"></div>
           </div>
-          <div class="fee-card">
-            <div class="fee-label">Orders</div>
-            <div class="fee-value" id="mOrders">—</div>
-            <div class="fee-sub" id="mShipments"></div>
+          <div class="hero-card primary">
+            <div class="hero-label">Net Profit</div>
+            <div class="hero-value money" id="mNetProfit">—</div>
+            <div class="hero-sub" id="mNetProfitSub"></div>
           </div>
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
-          <div class="card">
-            <h2>Sales breakdown</h2>
-            <div id="salesBreakdown"></div>
-          </div>
+        <h2 style="margin-top:22px">Profit waterfall</h2>
+        <div class="subtitle">Click any row with a <span style="color:var(--orange)">▸</span> to expand.</div>
+        <div class="waterfall" id="waterfall"></div>
 
-          <div class="card">
-            <h2>Fee breakdown</h2>
-            <div id="feeBreakdown"></div>
-          </div>
+        <h2 style="margin-top:22px">COG detail (top 50 SKUs by spend)</h2>
+        <div class="subtitle">Per-SKU cost for units shipped in this window</div>
+        <div class="table-wrap" id="cogTableWrap">
+          <table>
+            <thead>
+              <tr><th>SKU</th><th style="text-align:right">Units shipped</th><th style="text-align:right">Unit COG</th><th style="text-align:right">Total COG</th></tr>
+            </thead>
+            <tbody id="cogBody"></tbody>
+          </table>
         </div>
 
-        <div class="card" style="margin-top:18px" id="serviceCard" hidden>
-          <h2>Standalone service fees</h2>
-          <div class="subtitle">Not tied to a specific sale — storage, LTSF, subscription, etc.</div>
-          <div id="serviceBreakdown"></div>
-        </div>
-
-        <div class="card" style="margin-top:18px" id="adjCard" hidden>
-          <h2>Adjustments</h2>
-          <div id="adjBreakdown"></div>
-        </div>
-
-        <div class="card" style="margin-top:18px">
-          <h2>Recent shipments (first 20)</h2>
-          <div class="subtitle">Per-order sale + fee detail</div>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Posted</th><th>Order ID</th><th>Marketplace</th>
-                  <th style="text-align:right">Principal</th>
-                  <th style="text-align:right">Shipping</th>
-                  <th style="text-align:right">Tax</th>
-                  <th style="text-align:right">Commission</th>
-                  <th style="text-align:right">FBA Fee</th>
-                  <th>Items</th>
-                </tr>
-              </thead>
-              <tbody id="shipmentsBody"></tbody>
-            </table>
-          </div>
+        <h2 style="margin-top:22px">Recent shipments (first 20)</h2>
+        <div class="subtitle">Per-order sale + fee detail</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Posted</th><th>Order ID</th><th>Marketplace</th>
+                <th style="text-align:right">Principal</th>
+                <th style="text-align:right">Shipping</th>
+                <th style="text-align:right">Tax</th>
+                <th style="text-align:right">Commission</th>
+                <th style="text-align:right">FBA Fee</th>
+                <th>Items</th>
+              </tr>
+            </thead>
+            <tbody id="shipmentsBody"></tbody>
+          </table>
         </div>
 
         <details style="margin-top:18px" class="card">
@@ -166,6 +195,7 @@
 <script>
   let creds = [];
   let fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+  let lastData = null;
 
   document.addEventListener('sidebarReady', async () => {
     try {
@@ -193,17 +223,16 @@
     const credID = document.getElementById('fCredential').value;
     const days = document.getElementById('fDays').value;
     if (!credID) return;
-
     btn.disabled = true;
     btn.textContent = 'Pulling…';
     document.getElementById('alertBox').innerHTML = '';
-
     try {
       const { api } = window._SKCAdmin;
       const data = await api('POST', '/api/debug/amazon/financial-events', {
         credentialID: parseInt(credID, 10),
         daysBack: parseInt(days, 10),
       });
+      lastData = data;
       render(data);
     } catch (e) {
       document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
@@ -216,6 +245,7 @@
 
   function render(data) {
     const s = data.summary;
+    const cog = data.cog || {};
     if (s.currencies && s.currencies.length) {
       fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: s.currencies[0] || 'USD' });
     }
@@ -225,71 +255,63 @@
     document.getElementById('resultsMeta').textContent =
       'Currency: ' + (s.currencies.join(', ') || '—') + '  ·  Posted after ' + new Date(data.postedAfter).toLocaleString();
 
-    const grossSales = s.sales.grossSales;
-    const totalFees  = s.fees.totalSaleFees + s.serviceFees.total;
-
-    document.getElementById('mGross').textContent = fmt.format(grossSales);
-    document.getElementById('mGrossSub').textContent = s.sales.productRevenue ? fmt.format(s.sales.productRevenue) + ' products + ' + fmt.format(s.sales.shippingRevenue) + ' shipping' : '';
-    document.getElementById('mFees').textContent = fmt.format(totalFees);
-    document.getElementById('mFeesSub').textContent = s.effectiveFeeRate != null ? s.effectiveFeeRate + '% of gross sales' : '—';
-    document.getElementById('mNet').textContent = fmt.format(s.netProceeds);
-    document.getElementById('mNet').classList.toggle('negative', s.netProceeds < 0);
-    document.getElementById('mNet').classList.toggle('positive', s.netProceeds > 0);
-
-    document.getElementById('mOrders').textContent = s.orderCount;
-    document.getElementById('mShipments').textContent = s.shipmentCount + ' shipment event' + (s.shipmentCount === 1 ? '' : 's');
-
-    // Sales breakdown
-    document.getElementById('salesBreakdown').innerHTML = rows([
-      ['Product revenue (Principal)', s.sales.productRevenue],
-      ['Shipping revenue', s.sales.shippingRevenue],
-      ['Gift wrap', s.sales.giftWrap],
-      ['Tax collected', s.sales.tax],
-      ['Promotion discounts', s.sales.promotionDiscount],
-      ['Refunds', s.refunds.total + ' (' + s.refunds.count + ' refund' + (s.refunds.count === 1 ? '' : 's') + ')', { isText: true }],
-    ]);
-
-    // Fee breakdown
-    const feeRows = [
-      ['Referral / Commission', s.fees.commission],
-      ['FBA fulfillment', s.fees.fba],
-      ['Other per-sale fees', s.fees.other],
-    ];
-    Object.entries(s.fees.otherBreakdown).forEach(([k, v]) => {
-      feeRows.push([' ↳ ' + k, v]);
-    });
-    document.getElementById('feeBreakdown').innerHTML = rows(feeRows);
-
-    // Service fees card
-    const sfCard = document.getElementById('serviceCard');
-    const sfEntries = Object.entries(s.serviceFees.breakdown || {});
-    if (sfEntries.length) {
-      sfCard.hidden = false;
-      document.getElementById('serviceBreakdown').innerHTML = rows(
-        sfEntries.map(([k, v]) => [k, v]).concat([['Total service fees', s.serviceFees.total]])
-      );
+    // COG callout
+    const coCo = document.getElementById('cogCallout');
+    if (cog.available === false) {
+      coCo.innerHTML = '<div class="callout callout-warn">⚠ Cost of goods unavailable — ' + esc(cog.reason || 'unknown reason')
+        + '. Net Profit will equal Net Proceeds until COG is wired up. Fix: set <code>DataDbConnString</code> for this brand on the Brands page, and ensure <code>tbl_PPA_IMS_SKU</code> exists with a COG column.</div>';
+    } else if (cog.missingCogCount > 0) {
+      coCo.innerHTML = '<div class="callout callout-info">ℹ ' + cog.missingCogCount + ' of ' + cog.skuCount + ' SKUs have no COG in tbl_PPA_IMS_SKU. Net Profit treats missing COG as zero — real profit is lower than shown.</div>';
     } else {
-      sfCard.hidden = true;
+      coCo.innerHTML = '';
     }
 
-    // Adjustments card
-    const adjCard = document.getElementById('adjCard');
-    const adjEntries = Object.entries(s.adjustments.breakdown || {});
-    if (adjEntries.length) {
-      adjCard.hidden = false;
-      document.getElementById('adjBreakdown').innerHTML = rows(
-        adjEntries.map(([k, v]) => [k, v]).concat([['Total adjustments', s.adjustments.total]])
-      );
+    // Hero cards
+    const grossSales = s.sales.grossSales;
+    const totalSaleFees = s.fees.totalSaleFees;
+    const totalFees = totalSaleFees + s.serviceFees.total; // Amazon takings
+    document.getElementById('mGross').textContent = fmt.format(grossSales);
+    document.getElementById('mGrossSub').textContent = fmt.format(s.sales.productRevenue) + ' items + ' + fmt.format(s.sales.shippingRevenue) + ' shipping';
+
+    document.getElementById('mFees').textContent = fmt.format(totalFees);
+    document.getElementById('mFeesSub').textContent = s.effectiveFeeRate != null ? s.effectiveFeeRate + '% of gross sales' : '—';
+
+    document.getElementById('mCog').textContent = cog.available ? fmt.format(-cog.totalCog) : '—';
+    document.getElementById('mCogSub').textContent = cog.available
+      ? cog.skuCount + ' SKU' + (cog.skuCount === 1 ? '' : 's') + ' (' + (cog.skuCount - cog.missingCogCount) + ' with COG)'
+      : 'not available';
+
+    const netProfit = data.netProfit != null ? data.netProfit : (s.netProceeds - (cog.totalCog || 0));
+    document.getElementById('mNetProfit').textContent = fmt.format(netProfit);
+    document.getElementById('mNetProfit').classList.toggle('negative', netProfit < 0);
+    document.getElementById('mNetProfit').classList.toggle('positive', netProfit > 0);
+    const marginStr = data.profitMarginPct != null ? data.profitMarginPct + '% margin' : '';
+    document.getElementById('mNetProfitSub').textContent = marginStr + (cog.available ? '' : '  ·  (excl. COG)');
+
+    // Waterfall
+    renderWaterfall(s, cog, netProfit);
+
+    // COG table
+    const cbody = document.getElementById('cogBody');
+    if (!cog.breakdown || !cog.breakdown.length) {
+      cbody.innerHTML = '<tr><td colspan="4" class="empty-state">No SKU-level COG to show.</td></tr>';
     } else {
-      adjCard.hidden = true;
+      cbody.innerHTML = cog.breakdown.map(r => `
+        <tr>
+          <td class="mono">${esc(r.sku)}</td>
+          <td class="mono" style="text-align:right">${r.qty}</td>
+          <td class="mono" style="text-align:right">${r.hasCog ? fmt.format(r.unitCog) : '<span style="color:var(--red)">—</span>'}</td>
+          <td class="mono" style="text-align:right">${r.hasCog ? fmt.format(r.totalCog) : '<span style="color:var(--red)">missing</span>'}</td>
+        </tr>
+      `).join('');
     }
 
     // Shipments
-    const tbody = document.getElementById('shipmentsBody');
+    const sbody = document.getElementById('shipmentsBody');
     if (!data.shipmentEvents.length) {
-      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No shipment events in the selected window.</td></tr>';
+      sbody.innerHTML = '<tr><td colspan="9" class="empty-state">No shipment events in the selected window.</td></tr>';
     } else {
-      tbody.innerHTML = data.shipmentEvents.map(ev => `
+      sbody.innerHTML = data.shipmentEvents.map(ev => `
         <tr>
           <td class="mono" style="font-size:11px">${ev.postedDate ? new Date(ev.postedDate).toLocaleString() : '—'}</td>
           <td class="mono" style="font-size:11px">${esc(ev.amazonOrderId || '—')}</td>
@@ -307,18 +329,115 @@
     document.getElementById('rawSample').textContent = JSON.stringify(data.rawSample, null, 2);
   }
 
-  function rows(list) {
-    return list.map(([label, value, opts]) => {
-      const isText = opts && opts.isText;
-      const valStr = isText ? value : fmt.format(value);
-      const cls = !isText && value < 0 ? 'negative' : '';
-      return `
-        <div class="breakdown-row">
-          <div style="color:var(--text-muted)">${esc(label)}</div>
-          <div class="money ${cls}">${esc(valStr)}</div>
-        </div>
-      `;
-    }).join('');
+  /* ---------- Waterfall rendering ---------- */
+  function renderWaterfall(s, cog, netProfit) {
+    const wf = document.getElementById('waterfall');
+    const netRevenue = s.sales.grossSales + s.sales.tax + s.sales.promotionDiscount;
+    const feeRows = [
+      { label: 'Commission / referral', amount: s.fees.commission },
+      { label: 'FBA fulfillment', amount: s.fees.fba },
+    ];
+    Object.entries(s.fees.otherBreakdown || {}).forEach(([k, v]) => {
+      feeRows.push({ label: k, amount: v });
+    });
+    if (s.fees.other !== 0 && Object.keys(s.fees.otherBreakdown || {}).length === 0) {
+      feeRows.push({ label: 'Other per-sale fees', amount: s.fees.other });
+    }
+
+    const serviceRows = Object.entries(s.serviceFees.breakdown || {}).map(([k, v]) => ({ label: k, amount: v }));
+    const adjRows = Object.entries(s.adjustments.breakdown || {}).map(([k, v]) => ({ label: k, amount: v }));
+
+    const sections = [
+      expRow('Gross Sales (items + shipping + gift wrap)', s.sales.grossSales, 'sec-sales', [
+        ['Product revenue (Principal)', s.sales.productRevenue],
+        ['Shipping revenue', s.sales.shippingRevenue],
+        ['Gift wrap', s.sales.giftWrap],
+      ]),
+      plainRow('Tax collected (passes to Amazon)', s.sales.tax, 'muted'),
+      plainRow('Promotion discounts', s.sales.promotionDiscount, s.sales.promotionDiscount < 0 ? '' : 'muted'),
+      subRow('Net revenue (buyer payments net of promos & tax)', netRevenue),
+      expRow('Amazon per-sale fees', -Math.abs(s.fees.totalSaleFees), 'sec-fees', feeRows.map(r => [r.label, r.amount])),
+      serviceRows.length
+        ? expRow('Standalone service fees (storage, LTSF, etc.)', s.serviceFees.total, 'sec-svc', serviceRows.map(r => [r.label, r.amount]))
+        : '',
+      s.refunds.total !== 0
+        ? plainRow('Refunds (' + s.refunds.count + ')', s.refunds.total)
+        : '',
+      adjRows.length
+        ? expRow('Adjustments', s.adjustments.total, 'sec-adj', adjRows.map(r => [r.label, r.amount]))
+        : '',
+      subRow('Net proceeds from Amazon', s.netProceeds),
+      cog.available
+        ? expRow('Cost of goods (' + cog.skuCount + ' SKUs, column ' + (cog.column || '?') + ')', -Math.abs(cog.totalCog), 'sec-cog', [
+            ['See COG detail table below', null],
+          ])
+        : plainRow('Cost of goods', null, 'muted', 'unavailable — see callout above'),
+      totalRow('NET PROFIT', netProfit, s.sales.grossSales),
+    ];
+
+    wf.innerHTML = sections.filter(Boolean).join('');
+
+    // Wire up expandable sections
+    wf.querySelectorAll('.wf-row.expandable').forEach(row => {
+      row.addEventListener('click', () => {
+        const id = row.getAttribute('data-target');
+        const detail = document.getElementById(id);
+        if (!detail) return;
+        const shown = detail.classList.toggle('show');
+        row.classList.toggle('expanded', shown);
+      });
+    });
+  }
+
+  function plainRow(label, amount, className, overrideRight) {
+    const cls = amount != null && amount < 0 ? 'negative' : (amount != null && amount > 0 && className !== 'muted' ? 'positive' : '');
+    const right = overrideRight != null
+      ? '<span class="money muted">' + esc(overrideRight) + '</span>'
+      : (amount != null ? '<span class="money ' + cls + '">' + fmt.format(amount) + '</span>' : '—');
+    return `
+      <div class="wf-row">
+        <div class="wf-label ${className || ''}">${esc(label)}</div>
+        <div></div>
+        <div class="wf-amount">${right}</div>
+      </div>
+    `;
+  }
+  function subRow(label, amount) {
+    return `
+      <div class="wf-row subtotal">
+        <div class="wf-label">${esc(label)}</div>
+        <div></div>
+        <div class="wf-amount money ${amount >= 0 ? 'positive' : 'negative'}">${fmt.format(amount)}</div>
+      </div>
+    `;
+  }
+  function totalRow(label, amount, grossSales) {
+    const pct = grossSales > 0 ? ' · ' + (Math.round(amount / grossSales * 10000) / 100) + '% margin' : '';
+    return `
+      <div class="wf-row total">
+        <div class="wf-label">${esc(label)}</div>
+        <div class="wf-chevron"></div>
+        <div class="wf-amount money">${fmt.format(amount)}<div style="font-size:11px;color:var(--text-muted);font-weight:500;margin-top:2px">${esc(pct)}</div></div>
+      </div>
+    `;
+  }
+  function expRow(label, amount, id, detail) {
+    const cls = amount < 0 ? 'negative' : (amount > 0 ? 'positive' : '');
+    const detailHtml = (detail || []).map(([l, v]) => `
+      <div class="wf-row">
+        <div class="wf-label indent">↳ ${esc(l)}</div>
+        <div></div>
+        <div class="wf-amount money ${v != null && v < 0 ? 'negative' : ''}">${v == null ? '—' : fmt.format(v)}</div>
+      </div>
+    `).join('');
+    return `
+      <div class="wf-row expandable" data-target="${id}">
+        <div class="wf-label"><span class="wf-chevron">▸</span>${esc(label)}</div>
+        <div></div>
+        <div class="wf-amount money ${cls}">${fmt.format(amount)}</div>
+      </div>
+      <div class="wf-detail" id="${id}">${detailHtml}</div>
+    `;
   }
 
   function esc(s) {

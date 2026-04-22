@@ -10,6 +10,7 @@ const express = require('express');
 const { sql, getPool } = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
 const { callSpApi } = require('../lib/amazonApi');
+const { fetchCogBySku } = require('../lib/brandDb');
 const { logAction, reqMeta } = require('../db/queries/audit');
 
 const router = express.Router();
@@ -119,13 +120,60 @@ router.post('/amazon/financial-events', async (req, res) => {
     const events = (apiResp && apiResp.payload && apiResp.payload.FinancialEvents) || {};
 
     const summary = summarizeFinancialEvents(events);
+    const shipmentEvents = compactShipmentEvents(events.ShipmentEventList || []);
+
+    // ---- COG lookup from brand's data DB ----
+    const skuQtyMap = {}; // sku -> total qty shipped in window
+    for (const ev of shipmentEvents) {
+      for (const item of ev.items) {
+        if (!item.sku) continue;
+        skuQtyMap[item.sku] = (skuQtyMap[item.sku] || 0) + (item.quantity || 0);
+      }
+    }
+    const skus = Object.keys(skuQtyMap);
+    const cogResult = await fetchCogBySku(ctx.brand.BrandUID, skus);
+
+    // Aggregate COG + per-SKU rollup
+    let totalCog = 0;
+    const cogBreakdown = []; // [{sku, qty, unitCog, totalCog, hasCog}]
+    for (const sku of skus) {
+      const qty = skuQtyMap[sku];
+      const unitCog = cogResult.cogBySku[sku];
+      if (unitCog != null) {
+        totalCog += unitCog * qty;
+        cogBreakdown.push({ sku, qty, unitCog, totalCog: round2(unitCog * qty), hasCog: true });
+      } else {
+        cogBreakdown.push({ sku, qty, unitCog: null, totalCog: 0, hasCog: false });
+      }
+    }
+    cogBreakdown.sort((a, b) => (b.totalCog || 0) - (a.totalCog || 0));
+
+    // Compute net profit
+    const missingCog = cogBreakdown.filter((x) => !x.hasCog).length;
+    const netProceeds = summary.netProceeds;
+    const netProfit = round2(netProceeds - totalCog);
+    const cogInfo = {
+      available: !cogResult.unavailableReason,
+      reason: cogResult.unavailableReason || null,
+      column: cogResult.cogColumn,
+      totalCog: round2(totalCog),
+      skuCount: skus.length,
+      missingCogCount: missingCog,
+      breakdown: cogBreakdown.slice(0, 50), // cap for UI
+    };
 
     await logAction({
       userID: req.user.userID,
       action: 'DEBUG_AMAZON_FINANCIAL_EVENTS',
       entityType: 'BrandCredential',
       entityID: String(credentialID),
-      details: { daysBack: days, brand: ctx.brand.BrandName, shipmentCount: summary.shipmentCount },
+      details: {
+        daysBack: days,
+        brand: ctx.brand.BrandName,
+        shipmentCount: summary.shipmentCount,
+        cogAvailable: cogInfo.available,
+        cogMissing: missingCog,
+      },
       ...reqMeta(req),
     });
 
@@ -134,11 +182,15 @@ router.post('/amazon/financial-events', async (req, res) => {
       daysBack: days,
       postedAfter,
       summary,
+      cog: cogInfo,
+      netProfit,
+      profitMarginPct: summary.sales.grossSales > 0
+        ? round2((netProfit / summary.sales.grossSales) * 100)
+        : null,
       nextToken: apiResp && apiResp.payload && apiResp.payload.NextEventPublicationDate
                  ? null : (apiResp && apiResp.payload && apiResp.payload.NextToken) || null,
       // First 20 shipment events for drill-down detail
-      shipmentEvents: compactShipmentEvents(events.ShipmentEventList || []).slice(0, 20),
-      // Raw payload available for debugging but capped
+      shipmentEvents: shipmentEvents.slice(0, 20),
       rawSample: {
         ShipmentEventCount: (events.ShipmentEventList || []).length,
         RefundEventCount: (events.RefundEventList || []).length,
