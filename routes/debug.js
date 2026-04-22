@@ -100,7 +100,12 @@ router.get('/amazon-credentials', async (_req, res) => {
  */
 router.post('/amazon/financial-events', async (req, res) => {
   try {
-    const { credentialID, daysBack, postedAfter: postedAfterOverride } = req.body || {};
+    const {
+      credentialID,
+      daysBack,
+      postedAfter: postedAfterOverride,
+      postedBefore: postedBeforeOverride,
+    } = req.body || {};
     if (!credentialID) return res.status(400).json({ error: 'credentialID is required' });
 
     const ctx = await loadCredential(parseInt(credentialID, 10));
@@ -109,18 +114,23 @@ router.post('/amazon/financial-events', async (req, res) => {
       return res.status(400).json({ error: 'Only Amazon credentials are supported' });
     }
 
-    // Determine time window — caller can pass explicit postedAfter (for "Today")
+    // Determine time window — caller can pass explicit postedAfter and optional
+    // postedBefore (for closed-range windows like "Yesterday" or "This month"),
     // or a daysBack integer (default 7, capped at 90).
-    let postedAfter;
+    let postedAfter, postedBefore;
     if (postedAfterOverride && typeof postedAfterOverride === 'string') {
       postedAfter = new Date(postedAfterOverride).toISOString();
     } else {
       const days = Math.max(1, Math.min(parseInt(daysBack, 10) || 7, 90));
       postedAfter = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     }
+    if (postedBeforeOverride && typeof postedBeforeOverride === 'string') {
+      postedBefore = new Date(postedBeforeOverride).toISOString();
+    }
+    const effectiveEnd = postedBefore ? new Date(postedBefore).getTime() : Date.now();
     const days = Math.max(
       0.04,
-      Math.round((Date.now() - new Date(postedAfter).getTime()) / (1000 * 60 * 60 * 24) * 10) / 10
+      Math.round((effectiveEnd - new Date(postedAfter).getTime()) / (1000 * 60 * 60 * 24) * 10) / 10
     );
 
     // Accumulator across pages
@@ -135,8 +145,9 @@ router.post('/amazon/financial-events', async (req, res) => {
       if (nextToken) {
         return '/finances/v0/financialEvents?NextToken=' + encodeURIComponent(nextToken);
       }
-      return '/finances/v0/financialEvents?PostedAfter=' + encodeURIComponent(postedAfter)
-           + '&MaxResultsPerPage=100';
+      let qs = 'PostedAfter=' + encodeURIComponent(postedAfter) + '&MaxResultsPerPage=100';
+      if (postedBefore) qs += '&PostedBefore=' + encodeURIComponent(postedBefore);
+      return '/finances/v0/financialEvents?' + qs;
     };
 
     const { pages, hitCap, capReason, elapsedMs } = await paginateSpApi(ctx, buildPath, (payload) => {
@@ -223,6 +234,7 @@ router.post('/amazon/financial-events', async (req, res) => {
       brand: ctx.brand,
       daysBack: days,
       postedAfter,
+      postedBefore: postedBefore || null,
       summary,
       cog: cogInfo,
       netProfit,

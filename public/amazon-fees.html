@@ -106,11 +106,12 @@
           <div>
             <label style="margin-top:0">Window</label>
             <select id="fDays">
-              <option value="today">Today (midnight local)</option>
-              <option value="1">Last 24 hours</option>
-              <option value="7" selected>Last 7 days</option>
-              <option value="14">Last 14 days</option>
-              <option value="30">Last 30 days</option>
+              <option value="today">Today</option>
+              <option value="yesterday">Yesterday</option>
+              <option value="7d" selected>Last 7 days</option>
+              <option value="14d">Last 14 days</option>
+              <option value="mtd">This month (so far)</option>
+              <option value="30d">Last 30 days</option>
             </select>
             <div class="help-text" id="volumeHint"></div>
           </div>
@@ -250,23 +251,60 @@
     } catch (_) { return null; }
   }
 
+  /**
+   * Resolves the window dropdown value into { postedAfter, postedBefore?, days, label }.
+   * All times computed in the user's local timezone, serialized to ISO UTC.
+   */
+  function resolveWindow(windowVal) {
+    const now = new Date();
+    const midnightToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const midnightYesterday = new Date(midnightToday.getTime() - 24 * 60 * 60 * 1000);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
+    switch (windowVal) {
+      case 'today':
+        return {
+          postedAfter: midnightToday.toISOString(),
+          days: Math.max(0.04, (now - midnightToday) / (24 * 60 * 60 * 1000)),
+          label: 'today',
+        };
+      case 'yesterday':
+        return {
+          postedAfter: midnightYesterday.toISOString(),
+          postedBefore: midnightToday.toISOString(),
+          days: 1,
+          label: 'yesterday',
+        };
+      case 'mtd':
+        return {
+          postedAfter: monthStart.toISOString(),
+          days: Math.max(0.04, (now - monthStart) / (24 * 60 * 60 * 1000)),
+          label: 'this month (so far)',
+        };
+      case '7d':  return { daysBack: 7,  days: 7,  label: 'last 7 days' };
+      case '14d': return { daysBack: 14, days: 14, label: 'last 14 days' };
+      case '30d': return { daysBack: 30, days: 30, label: 'last 30 days' };
+      default:    return { daysBack: 7,  days: 7,  label: 'last 7 days' };
+    }
+  }
+
   async function runPull() {
     const btn = document.getElementById('runBtn');
     const credID = document.getElementById('fCredential').value;
     const windowVal = document.getElementById('fDays').value;
     if (!credID) return;
 
+    const w = resolveWindow(windowVal);
+
     // Guardrail: warn before starting a pull that will likely take long or truncate.
-    const days = windowVal === 'today' ? 1 : parseInt(windowVal, 10);
     const estPerDay = getCachedVolume(credID);
-    if (estPerDay && days >= 7) {
-      const estTotal = Math.round(estPerDay * days);
-      // 6000 events ≈ 60 pages ≈ server time budget
+    if (estPerDay && w.days >= 7) {
+      const estTotal = Math.round(estPerDay * w.days);
       if (estTotal > 6000) {
         const maxDays = Math.max(1, Math.floor(6000 / estPerDay));
         const ok = confirm(
           'Heads up: this brand averages ~' + estPerDay.toLocaleString() + ' events/day.\n\n' +
-          days + ' days ≈ ' + estTotal.toLocaleString() + ' events — server cap is ~6,000, so results will truncate.\n\n' +
+          w.label + ' ≈ ' + estTotal.toLocaleString() + ' events — server cap is ~6,000, so results will truncate.\n\n' +
           'Recommended max for this brand: ' + maxDays + ' day' + (maxDays === 1 ? '' : 's') + '.\n\n' +
           'Pull anyway (will return partial data)?'
         );
@@ -279,11 +317,11 @@
         );
         if (!ok) return;
       }
-    } else if (days >= 30 && !estPerDay) {
+    } else if (w.days >= 30 && !estPerDay) {
       const ok = confirm(
-        days + '-day window on an unknown-volume brand.\n\n' +
+        w.label + ' on an unknown-volume brand.\n\n' +
         'High-volume brands may truncate at the server cap (~6,000 events / 60 seconds).\n\n' +
-        'Continue? (Try "Today" or 7 days first to size the brand.)'
+        'Continue? (Try Today or 7 days first to size the brand.)'
       );
       if (!ok) return;
     }
@@ -296,14 +334,9 @@
       + '</div>';
 
     const payload = { credentialID: parseInt(credID, 10) };
-    if (windowVal === 'today') {
-      // Midnight today in user's local timezone
-      const now = new Date();
-      const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-      payload.postedAfter = midnight.toISOString();
-    } else {
-      payload.daysBack = parseInt(windowVal, 10);
-    }
+    if (w.postedAfter) payload.postedAfter = w.postedAfter;
+    if (w.postedBefore) payload.postedBefore = w.postedBefore;
+    if (w.daysBack) payload.daysBack = w.daysBack;
 
     try {
       const { api } = window._SKCAdmin;
@@ -328,16 +361,27 @@
       fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: s.currencies[0] || 'USD' });
     }
     document.getElementById('results').style.display = '';
-    // Heading — "Today" when the window starts at local midnight
+    // Heading — identify common windows by start (and end when closed-range)
     const windowStart = new Date(data.postedAfter);
+    const windowEnd = data.postedBefore ? new Date(data.postedBefore) : new Date();
     const now = new Date();
-    const isTodayWindow = windowStart.getFullYear() === now.getFullYear()
-      && windowStart.getMonth() === now.getMonth()
-      && windowStart.getDate() === now.getDate()
-      && windowStart.getHours() === 0 && windowStart.getMinutes() === 0;
-    const headingWindow = isTodayWindow
-      ? 'today (since midnight)'
-      : ('last ' + data.daysBack + ' day' + (data.daysBack === 1 ? '' : 's'));
+    const isMidnightLocal = (d) => d.getHours() === 0 && d.getMinutes() === 0 && d.getSeconds() === 0;
+    const sameDayLocal = (a, b) =>
+      a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+    const startOfThisMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+
+    let headingWindow;
+    if (data.postedBefore && isMidnightLocal(windowStart) && isMidnightLocal(windowEnd)
+        && sameDayLocal(windowEnd, now) && sameDayLocal(windowStart, new Date(now.getTime() - 86400000))) {
+      headingWindow = 'yesterday';
+    } else if (!data.postedBefore && isMidnightLocal(windowStart) && sameDayLocal(windowStart, now)) {
+      headingWindow = 'today (since midnight)';
+    } else if (!data.postedBefore && windowStart.getTime() === startOfThisMonth.getTime()) {
+      headingWindow = 'this month (so far)';
+    } else {
+      const d = Math.round(data.daysBack);
+      headingWindow = 'last ' + d + ' day' + (d === 1 ? '' : 's');
+    }
     document.getElementById('resultsHeading').textContent = data.brand.BrandName + ' — ' + headingWindow;
 
     const pag = data.pagination || {};
