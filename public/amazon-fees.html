@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKU Compass Admin — Amazon Fees</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/tokens.css">
+<style>
+  .money { font-family: 'Space Mono', monospace; font-size: 14px; }
+  .money.negative { color: var(--red); }
+  .money.positive { color: var(--green); }
+  .fee-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+    gap: 14px;
+  }
+  .fee-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+  }
+  .fee-label {
+    font-size: 11px; color: var(--text-muted);
+    text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 6px;
+  }
+  .fee-value {
+    font-family: 'Space Mono', monospace;
+    font-size: 22px; font-weight: 700;
+  }
+  .fee-sub {
+    font-size: 11px; color: var(--text-dim); margin-top: 4px;
+    font-family: 'Space Mono', monospace;
+  }
+  .breakdown-row {
+    display: flex; justify-content: space-between;
+    padding: 6px 0; border-bottom: 1px solid var(--border);
+    font-size: 12px;
+  }
+  .breakdown-row:last-child { border-bottom: none; }
+  .breakdown-row .mono { font-size: 12px; }
+</style>
+</head>
+<body data-page="amazon-fees">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Amazon Fees</div>
+        <div class="topbar-sub">What Amazon is charging for recent sales — live from the SP-API Financial Events endpoint</div>
+      </div>
+    </div>
+    <div class="page-content">
+      <div id="alertBox"></div>
+
+      <div class="card" style="margin-bottom:20px">
+        <div style="display:grid;grid-template-columns:1fr 180px 120px;gap:14px;align-items:end">
+          <div>
+            <label style="margin-top:0">Credential</label>
+            <select id="fCredential">
+              <option value="">Loading…</option>
+            </select>
+          </div>
+          <div>
+            <label style="margin-top:0">Days back</label>
+            <select id="fDays">
+              <option value="1">Last 24 hours</option>
+              <option value="7" selected>Last 7 days</option>
+              <option value="14">Last 14 days</option>
+              <option value="30">Last 30 days</option>
+              <option value="60">Last 60 days</option>
+              <option value="90">Last 90 days</option>
+            </select>
+          </div>
+          <div>
+            <button class="btn" id="runBtn" onclick="runPull()">Pull fees</button>
+          </div>
+        </div>
+        <div class="help-text" style="margin-top:10px">
+          Calls <code>GET /finances/v0/financialEvents</code> and summarizes the response. First page only (100 events)
+          — pagination comes with the Phase 3 runner.
+        </div>
+      </div>
+
+      <div id="results" style="display:none">
+        <h2 id="resultsHeading" style="margin-bottom:4px"></h2>
+        <div class="subtitle" id="resultsMeta"></div>
+
+        <div class="fee-grid" style="margin:18px 0 22px">
+          <div class="fee-card">
+            <div class="fee-label">Gross Sales</div>
+            <div class="fee-value" id="mGross">—</div>
+            <div class="fee-sub" id="mGrossSub"></div>
+          </div>
+          <div class="fee-card">
+            <div class="fee-label">Total Amazon Fees</div>
+            <div class="fee-value money negative" id="mFees">—</div>
+            <div class="fee-sub" id="mFeesSub">&mdash;% of gross sales</div>
+          </div>
+          <div class="fee-card">
+            <div class="fee-label">Net Proceeds</div>
+            <div class="fee-value" id="mNet">—</div>
+            <div class="fee-sub">After fees, refunds, adjustments</div>
+          </div>
+          <div class="fee-card">
+            <div class="fee-label">Orders</div>
+            <div class="fee-value" id="mOrders">—</div>
+            <div class="fee-sub" id="mShipments"></div>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:18px">
+          <div class="card">
+            <h2>Sales breakdown</h2>
+            <div id="salesBreakdown"></div>
+          </div>
+
+          <div class="card">
+            <h2>Fee breakdown</h2>
+            <div id="feeBreakdown"></div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:18px" id="serviceCard" hidden>
+          <h2>Standalone service fees</h2>
+          <div class="subtitle">Not tied to a specific sale — storage, LTSF, subscription, etc.</div>
+          <div id="serviceBreakdown"></div>
+        </div>
+
+        <div class="card" style="margin-top:18px" id="adjCard" hidden>
+          <h2>Adjustments</h2>
+          <div id="adjBreakdown"></div>
+        </div>
+
+        <div class="card" style="margin-top:18px">
+          <h2>Recent shipments (first 20)</h2>
+          <div class="subtitle">Per-order sale + fee detail</div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Posted</th><th>Order ID</th><th>Marketplace</th>
+                  <th style="text-align:right">Principal</th>
+                  <th style="text-align:right">Shipping</th>
+                  <th style="text-align:right">Tax</th>
+                  <th style="text-align:right">Commission</th>
+                  <th style="text-align:right">FBA Fee</th>
+                  <th>Items</th>
+                </tr>
+              </thead>
+              <tbody id="shipmentsBody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <details style="margin-top:18px" class="card">
+          <summary style="cursor:pointer;font-weight:600">Raw response sample (event counts)</summary>
+          <pre class="mono" style="margin-top:10px;font-size:12px;color:var(--text-muted);white-space:pre-wrap" id="rawSample"></pre>
+        </details>
+      </div>
+    </div>
+  </main>
+
+<script src="/sidebar.js"></script>
+<script>
+  let creds = [];
+  let fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+  document.addEventListener('sidebarReady', async () => {
+    try {
+      const { api } = window._SKCAdmin;
+      const { credentials } = await api('GET', '/api/debug/amazon-credentials');
+      creds = credentials;
+      const sel = document.getElementById('fCredential');
+      if (!creds.length) {
+        sel.innerHTML = '<option value="">No Amazon credentials yet — add one on Credentials page.</option>';
+        document.getElementById('runBtn').disabled = true;
+        return;
+      }
+      sel.innerHTML = creds.map(c => `
+        <option value="${c.CredentialID}">
+          ${esc(c.BrandName)} — ${esc(c.Region || 'NA')} ${c.AccountIdentifier ? '(' + esc(c.AccountIdentifier) + ')' : ''}
+        </option>
+      `).join('');
+    } catch (e) {
+      document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
+    }
+  });
+
+  async function runPull() {
+    const btn = document.getElementById('runBtn');
+    const credID = document.getElementById('fCredential').value;
+    const days = document.getElementById('fDays').value;
+    if (!credID) return;
+
+    btn.disabled = true;
+    btn.textContent = 'Pulling…';
+    document.getElementById('alertBox').innerHTML = '';
+
+    try {
+      const { api } = window._SKCAdmin;
+      const data = await api('POST', '/api/debug/amazon/financial-events', {
+        credentialID: parseInt(credID, 10),
+        daysBack: parseInt(days, 10),
+      });
+      render(data);
+    } catch (e) {
+      document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
+      document.getElementById('results').style.display = 'none';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Pull fees';
+    }
+  }
+
+  function render(data) {
+    const s = data.summary;
+    if (s.currencies && s.currencies.length) {
+      fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: s.currencies[0] || 'USD' });
+    }
+    document.getElementById('results').style.display = '';
+    document.getElementById('resultsHeading').textContent =
+      data.brand.BrandName + ' — last ' + data.daysBack + ' day' + (data.daysBack === 1 ? '' : 's');
+    document.getElementById('resultsMeta').textContent =
+      'Currency: ' + (s.currencies.join(', ') || '—') + '  ·  Posted after ' + new Date(data.postedAfter).toLocaleString();
+
+    const grossSales = s.sales.grossSales;
+    const totalFees  = s.fees.totalSaleFees + s.serviceFees.total;
+
+    document.getElementById('mGross').textContent = fmt.format(grossSales);
+    document.getElementById('mGrossSub').textContent = s.sales.productRevenue ? fmt.format(s.sales.productRevenue) + ' products + ' + fmt.format(s.sales.shippingRevenue) + ' shipping' : '';
+    document.getElementById('mFees').textContent = fmt.format(totalFees);
+    document.getElementById('mFeesSub').textContent = s.effectiveFeeRate != null ? s.effectiveFeeRate + '% of gross sales' : '—';
+    document.getElementById('mNet').textContent = fmt.format(s.netProceeds);
+    document.getElementById('mNet').classList.toggle('negative', s.netProceeds < 0);
+    document.getElementById('mNet').classList.toggle('positive', s.netProceeds > 0);
+
+    document.getElementById('mOrders').textContent = s.orderCount;
+    document.getElementById('mShipments').textContent = s.shipmentCount + ' shipment event' + (s.shipmentCount === 1 ? '' : 's');
+
+    // Sales breakdown
+    document.getElementById('salesBreakdown').innerHTML = rows([
+      ['Product revenue (Principal)', s.sales.productRevenue],
+      ['Shipping revenue', s.sales.shippingRevenue],
+      ['Gift wrap', s.sales.giftWrap],
+      ['Tax collected', s.sales.tax],
+      ['Promotion discounts', s.sales.promotionDiscount],
+      ['Refunds', s.refunds.total + ' (' + s.refunds.count + ' refund' + (s.refunds.count === 1 ? '' : 's') + ')', { isText: true }],
+    ]);
+
+    // Fee breakdown
+    const feeRows = [
+      ['Referral / Commission', s.fees.commission],
+      ['FBA fulfillment', s.fees.fba],
+      ['Other per-sale fees', s.fees.other],
+    ];
+    Object.entries(s.fees.otherBreakdown).forEach(([k, v]) => {
+      feeRows.push([' ↳ ' + k, v]);
+    });
+    document.getElementById('feeBreakdown').innerHTML = rows(feeRows);
+
+    // Service fees card
+    const sfCard = document.getElementById('serviceCard');
+    const sfEntries = Object.entries(s.serviceFees.breakdown || {});
+    if (sfEntries.length) {
+      sfCard.hidden = false;
+      document.getElementById('serviceBreakdown').innerHTML = rows(
+        sfEntries.map(([k, v]) => [k, v]).concat([['Total service fees', s.serviceFees.total]])
+      );
+    } else {
+      sfCard.hidden = true;
+    }
+
+    // Adjustments card
+    const adjCard = document.getElementById('adjCard');
+    const adjEntries = Object.entries(s.adjustments.breakdown || {});
+    if (adjEntries.length) {
+      adjCard.hidden = false;
+      document.getElementById('adjBreakdown').innerHTML = rows(
+        adjEntries.map(([k, v]) => [k, v]).concat([['Total adjustments', s.adjustments.total]])
+      );
+    } else {
+      adjCard.hidden = true;
+    }
+
+    // Shipments
+    const tbody = document.getElementById('shipmentsBody');
+    if (!data.shipmentEvents.length) {
+      tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No shipment events in the selected window.</td></tr>';
+    } else {
+      tbody.innerHTML = data.shipmentEvents.map(ev => `
+        <tr>
+          <td class="mono" style="font-size:11px">${ev.postedDate ? new Date(ev.postedDate).toLocaleString() : '—'}</td>
+          <td class="mono" style="font-size:11px">${esc(ev.amazonOrderId || '—')}</td>
+          <td style="font-size:12px">${esc(ev.marketplaceName || '—')}</td>
+          <td class="mono" style="text-align:right">${fmt.format(ev.principal)}</td>
+          <td class="mono" style="text-align:right">${fmt.format(ev.shipping)}</td>
+          <td class="mono" style="text-align:right">${fmt.format(ev.tax)}</td>
+          <td class="mono" style="text-align:right;color:var(--red)">${fmt.format(ev.commission)}</td>
+          <td class="mono" style="text-align:right;color:var(--red)">${fmt.format(ev.fbaFee)}</td>
+          <td class="mono" style="font-size:11px">${ev.items.length} item${ev.items.length === 1 ? '' : 's'}${ev.items[0] ? ' · ' + esc(ev.items[0].sku) : ''}</td>
+        </tr>
+      `).join('');
+    }
+
+    document.getElementById('rawSample').textContent = JSON.stringify(data.rawSample, null, 2);
+  }
+
+  function rows(list) {
+    return list.map(([label, value, opts]) => {
+      const isText = opts && opts.isText;
+      const valStr = isText ? value : fmt.format(value);
+      const cls = !isText && value < 0 ? 'negative' : '';
+      return `
+        <div class="breakdown-row">
+          <div style="color:var(--text-muted)">${esc(label)}</div>
+          <div class="money ${cls}">${esc(valStr)}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>

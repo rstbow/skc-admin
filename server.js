@@ -44,6 +44,7 @@ app.use('/api/endpoints',   safeRequire('./routes/endpoints',   'endpoints'));
 app.use('/api/brands',      safeRequire('./routes/brands',      'brands'));
 app.use('/api/credentials', safeRequire('./routes/credentials', 'credentials'));
 app.use('/api/runs',        safeRequire('./routes/runs',        'runs'));
+app.use('/api/debug',       safeRequire('./routes/debug',       'debug'));
 
 // Default route — serve login page
 app.get('/', (_req, res) => {
