@@ -8,7 +8,6 @@ const router = express.Router();
 router.use(requireAuth);
 
 const SECRET_FIELDS = ['refreshToken', 'accessToken', 'apiKey', 'appSecret'];
-const MASK = '••••••••';
 
 function maskRow(row) {
   return {
@@ -20,6 +19,7 @@ function maskRow(row) {
     connectorDisplay: row.ConnectorDisplay,
     accountIdentifier: row.AccountIdentifier,
     marketplaceIDs: row.MarketplaceIDs,
+    region: row.Region,
     hasRefreshToken: !!row.RefreshToken_Enc,
     hasAccessToken: !!row.AccessToken_Enc,
     hasApiKey: !!row.ApiKey_Enc,
@@ -34,6 +34,12 @@ function maskRow(row) {
   };
 }
 
+function encOrPassthrough(v) {
+  if (v === undefined) return { provided: false, value: null };
+  if (v === '' || v === null) return { provided: true, value: null };
+  return { provided: true, value: encrypt(v) };
+}
+
 /* ---------- GET /api/credentials?brandUID=... — credentials for a brand ---------- */
 router.get('/', async (req, res) => {
   try {
@@ -46,7 +52,7 @@ router.get('/', async (req, res) => {
         FROM admin.BrandCredentials bc
         JOIN admin.Connectors c ON c.ConnectorID = bc.ConnectorID
         WHERE bc.BrandUID = @buid
-        ORDER BY c.DisplayName
+        ORDER BY c.DisplayName, bc.Region, bc.AccountIdentifier
       `);
     res.json({ credentials: r.recordset.map(maskRow) });
   } catch (e) {
@@ -55,7 +61,27 @@ router.get('/', async (req, res) => {
   }
 });
 
-/* ---------- POST /api/credentials — upsert per (brand, connector) ---------- */
+/* ---------- GET /api/credentials/:credentialID — single row for editing ---------- */
+router.get('/:credentialID(\\d+)', async (req, res) => {
+  try {
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('id', sql.Int, parseInt(req.params.credentialID, 10))
+      .query(`
+        SELECT bc.*, c.ConnectorUID, c.Name AS ConnectorName, c.DisplayName AS ConnectorDisplay
+        FROM admin.BrandCredentials bc
+        JOIN admin.Connectors c ON c.ConnectorID = bc.ConnectorID
+        WHERE bc.CredentialID = @id
+      `);
+    if (!r.recordset.length) return res.status(404).json({ error: 'Not found' });
+    res.json({ credential: maskRow(r.recordset[0]) });
+  } catch (e) {
+    console.error('[credentials/get]', e);
+    res.status(500).json({ error: 'Failed to load credential' });
+  }
+});
+
+/* ---------- POST /api/credentials — create new (allows multiple per brand+connector) ---------- */
 router.post('/', async (req, res) => {
   try {
     const b = req.body || {};
@@ -64,60 +90,95 @@ router.post('/', async (req, res) => {
     }
 
     const pool = await getPool();
-
-    // Resolve connectorID
     const cr = await pool.request()
       .input('cuid', sql.UniqueIdentifier, b.connectorUID)
       .query('SELECT ConnectorID FROM admin.Connectors WHERE ConnectorUID = @cuid');
     if (!cr.recordset.length) return res.status(400).json({ error: 'Unknown connectorUID' });
     const connectorID = cr.recordset[0].ConnectorID;
 
-    // Encrypt any secret fields that were provided. Empty string = clear, undefined = leave alone.
-    const encOrPassthrough = (v) => {
-      if (v === undefined) return { provided: false, value: null };
-      if (v === '' || v === null) return { provided: true, value: null }; // explicit clear
-      return { provided: true, value: encrypt(v) };
-    };
+    const rt = encOrPassthrough(b.refreshToken);
+    const at = encOrPassthrough(b.accessToken);
+    const ak = encOrPassthrough(b.apiKey);
+    const as = encOrPassthrough(b.appSecret);
+
+    const r = await pool.request()
+      .input('brandUID', sql.UniqueIdentifier, b.brandUID)
+      .input('connectorID', sql.Int, connectorID)
+      .input('accountIdentifier', sql.NVarChar(200), b.accountIdentifier || null)
+      .input('marketplaceIDs', sql.NVarChar(500), b.marketplaceIDs || null)
+      .input('region', sql.NVarChar(10), b.region || null)
+      .input('extraConfig', sql.NVarChar(sql.MAX), b.extraConfig || null)
+      .input('isActive', sql.Bit, b.isActive == null ? 1 : (b.isActive ? 1 : 0))
+      .input('rt', sql.NVarChar(sql.MAX), rt.value)
+      .input('at', sql.NVarChar(sql.MAX), at.value)
+      .input('atExp', sql.DateTime2, b.accessTokenExpiresAt || null)
+      .input('ak', sql.NVarChar(sql.MAX), ak.value)
+      .input('as', sql.NVarChar(sql.MAX), as.value)
+      .query(`
+        INSERT INTO admin.BrandCredentials
+          (BrandUID, ConnectorID, AccountIdentifier, MarketplaceIDs, Region,
+           RefreshToken_Enc, AccessToken_Enc, AccessTokenExpiresAt, ApiKey_Enc, AppSecret_Enc,
+           ExtraConfig, IsActive)
+        OUTPUT INSERTED.CredentialID, INSERTED.BrandUID, INSERTED.ConnectorID,
+               INSERTED.AccountIdentifier, INSERTED.Region
+        VALUES
+          (@brandUID, @connectorID, @accountIdentifier, @marketplaceIDs, @region,
+           @rt, @at, @atExp, @ak, @as,
+           @extraConfig, @isActive);
+      `);
+
+    await logAction({
+      userID: req.user.userID,
+      action: 'CREDENTIAL_CREATE',
+      entityType: 'BrandCredential',
+      entityID: String(r.recordset[0].CredentialID),
+      details: {
+        brandUID: b.brandUID, connectorUID: b.connectorUID,
+        accountIdentifier: b.accountIdentifier, region: b.region,
+        secretsProvided: SECRET_FIELDS.filter((k) => b[k] !== undefined && b[k] !== ''),
+      },
+      ...reqMeta(req),
+    });
+
+    res.status(201).json({ credential: r.recordset[0] });
+  } catch (e) {
+    console.error('[credentials/create]', e);
+    if (e.number === 2627 || e.number === 2601) {
+      return res.status(409).json({ error: 'A credential with those identifiers already exists for this brand + connector. Edit that one instead or change the AccountIdentifier/Region.' });
+    }
+    res.status(500).json({ error: 'Failed to save credential: ' + e.message });
+  }
+});
+
+/* ---------- PUT /api/credentials/:credentialID — update single row ---------- */
+router.put('/:credentialID(\\d+)', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const pool = await getPool();
 
     const rt = encOrPassthrough(b.refreshToken);
     const at = encOrPassthrough(b.accessToken);
     const ak = encOrPassthrough(b.apiKey);
     const as = encOrPassthrough(b.appSecret);
 
-    // Build a dynamic UPDATE-on-match so un-provided secrets are preserved.
-    const setFrag = [
+    const setParts = [
       'AccountIdentifier = @accountIdentifier',
       'MarketplaceIDs = @marketplaceIDs',
+      'Region = @region',
       'ExtraConfig = @extraConfig',
       'IsActive = @isActive',
       'UpdatedAt = SYSUTCDATETIME()',
     ];
-    if (rt.provided) setFrag.push('RefreshToken_Enc = @rt');
-    if (at.provided) setFrag.push('AccessToken_Enc = @at, AccessTokenExpiresAt = @atExp');
-    if (ak.provided) setFrag.push('ApiKey_Enc = @ak');
-    if (as.provided) setFrag.push('AppSecret_Enc = @as');
-
-    const merge = `
-      MERGE admin.BrandCredentials WITH (HOLDLOCK) AS tgt
-      USING (VALUES (@brandUID, @connectorID)) AS src(BrandUID, ConnectorID)
-      ON tgt.BrandUID = src.BrandUID AND tgt.ConnectorID = src.ConnectorID
-      WHEN MATCHED THEN
-          UPDATE SET ${setFrag.join(', ')}
-      WHEN NOT MATCHED THEN
-          INSERT (BrandUID, ConnectorID, AccountIdentifier, MarketplaceIDs,
-                  RefreshToken_Enc, AccessToken_Enc, AccessTokenExpiresAt, ApiKey_Enc, AppSecret_Enc,
-                  ExtraConfig, IsActive)
-          VALUES (@brandUID, @connectorID, @accountIdentifier, @marketplaceIDs,
-                  @rt, @at, @atExp, @ak, @as,
-                  @extraConfig, @isActive)
-      OUTPUT INSERTED.CredentialID, INSERTED.BrandUID, INSERTED.ConnectorID;
-    `;
+    if (rt.provided) setParts.push('RefreshToken_Enc = @rt');
+    if (at.provided) setParts.push('AccessToken_Enc = @at, AccessTokenExpiresAt = @atExp');
+    if (ak.provided) setParts.push('ApiKey_Enc = @ak');
+    if (as.provided) setParts.push('AppSecret_Enc = @as');
 
     const request = pool.request()
-      .input('brandUID', sql.UniqueIdentifier, b.brandUID)
-      .input('connectorID', sql.Int, connectorID)
+      .input('id', sql.Int, parseInt(req.params.credentialID, 10))
       .input('accountIdentifier', sql.NVarChar(200), b.accountIdentifier || null)
       .input('marketplaceIDs', sql.NVarChar(500), b.marketplaceIDs || null)
+      .input('region', sql.NVarChar(10), b.region || null)
       .input('extraConfig', sql.NVarChar(sql.MAX), b.extraConfig || null)
       .input('isActive', sql.Bit, b.isActive == null ? 1 : (b.isActive ? 1 : 0))
       .input('rt', sql.NVarChar(sql.MAX), rt.value)
@@ -126,25 +187,34 @@ router.post('/', async (req, res) => {
       .input('ak', sql.NVarChar(sql.MAX), ak.value)
       .input('as', sql.NVarChar(sql.MAX), as.value);
 
-    const r = await request.query(merge);
+    const r = await request.query(`
+      UPDATE admin.BrandCredentials
+      SET ${setParts.join(', ')}
+      OUTPUT INSERTED.CredentialID
+      WHERE CredentialID = @id;
+    `);
+
+    if (!r.recordset.length) return res.status(404).json({ error: 'Not found' });
 
     await logAction({
       userID: req.user.userID,
-      action: 'CREDENTIAL_UPSERT',
+      action: 'CREDENTIAL_UPDATE',
       entityType: 'BrandCredential',
-      entityID: b.brandUID + ':' + b.connectorUID,
+      entityID: req.params.credentialID,
       details: {
-        brandUID: b.brandUID,
-        connectorUID: b.connectorUID,
-        secretsProvided: SECRET_FIELDS.filter((k) => b[k] !== undefined),
+        accountIdentifier: b.accountIdentifier, region: b.region,
+        secretsProvided: SECRET_FIELDS.filter((k) => b[k] !== undefined && b[k] !== ''),
       },
       ...reqMeta(req),
     });
 
-    res.status(201).json({ credential: r.recordset[0] });
+    res.json({ credential: r.recordset[0] });
   } catch (e) {
-    console.error('[credentials/upsert]', e);
-    res.status(500).json({ error: 'Failed to save credential: ' + e.message });
+    console.error('[credentials/update]', e);
+    if (e.number === 2627 || e.number === 2601) {
+      return res.status(409).json({ error: 'Would create a duplicate. Another credential already uses that AccountIdentifier/Region for this brand + connector.' });
+    }
+    res.status(500).json({ error: 'Failed to update credential: ' + e.message });
   }
 });
 
