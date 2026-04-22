@@ -1,6 +1,7 @@
 const express = require('express');
 const { sql, getPool } = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
+const { encrypt } = require('../config/crypto');
 const { logAction, reqMeta } = require('../db/queries/audit');
 
 const router = express.Router();
@@ -13,6 +14,8 @@ router.get('/', async (_req, res) => {
     const r = await pool.request().query(`
       SELECT c.ConnectorID, c.ConnectorUID, c.Name, c.DisplayName, c.AuthType,
              c.BaseURL, c.DocsURL, c.RunnerType, c.RunnerRef, c.ApiVersion,
+             c.AppClientID,
+             CAST(CASE WHEN c.AppClientSecret_Enc IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS HasAppClientSecret,
              c.IsActive, c.Notes, c.CreatedAt, c.UpdatedAt,
              (SELECT COUNT(*) FROM admin.Endpoints e WHERE e.ConnectorID = c.ConnectorID AND e.IsActive = 1) AS EndpointCount
       FROM admin.Connectors c
@@ -33,8 +36,10 @@ router.get('/:uid', async (req, res) => {
       .input('uid', sql.UniqueIdentifier, req.params.uid)
       .query(`
         SELECT ConnectorID, ConnectorUID, Name, DisplayName, AuthType, BaseURL, DocsURL,
-               DefaultRateLimitRPM, RunnerType, RunnerRef, ApiVersion, IsActive, Notes,
-               CreatedAt, UpdatedAt
+               DefaultRateLimitRPM, RunnerType, RunnerRef, ApiVersion,
+               AppClientID,
+               CAST(CASE WHEN AppClientSecret_Enc IS NOT NULL THEN 1 ELSE 0 END AS BIT) AS HasAppClientSecret,
+               IsActive, Notes, CreatedAt, UpdatedAt
         FROM admin.Connectors
         WHERE ConnectorUID = @uid
       `);
@@ -56,6 +61,8 @@ router.post('/', async (req, res) => {
     }
 
     const pool = await getPool();
+    const appClientSecretEnc = b.appClientSecret ? encrypt(b.appClientSecret) : null;
+
     const r = await pool.request()
       .input('name', sql.NVarChar(50), b.name.toUpperCase().trim())
       .input('displayName', sql.NVarChar(100), b.displayName.trim())
@@ -65,15 +72,21 @@ router.post('/', async (req, res) => {
       .input('runnerType', sql.NVarChar(30), b.runnerType || 'GENERIC')
       .input('runnerRef', sql.NVarChar(200), b.runnerRef || null)
       .input('apiVersion', sql.NVarChar(20), b.apiVersion || null)
+      .input('appClientID', sql.NVarChar(200), b.appClientID || null)
+      .input('appClientSecret', sql.NVarChar(sql.MAX), appClientSecretEnc)
       .input('notes', sql.NVarChar(sql.MAX), b.notes || null)
       .input('createdBy', sql.Int, req.user.userID)
       .input('updatedBy', sql.Int, req.user.userID)
       .query(`
         INSERT INTO admin.Connectors (Name, DisplayName, AuthType, BaseURL, DocsURL,
-                                      RunnerType, RunnerRef, ApiVersion, Notes, CreatedBy, UpdatedBy)
+                                      RunnerType, RunnerRef, ApiVersion,
+                                      AppClientID, AppClientSecret_Enc,
+                                      Notes, CreatedBy, UpdatedBy)
         OUTPUT INSERTED.ConnectorID, INSERTED.ConnectorUID, INSERTED.Name, INSERTED.DisplayName
         VALUES (@name, @displayName, @authType, @baseURL, @docsURL,
-                @runnerType, @runnerRef, @apiVersion, @notes, @createdBy, @updatedBy)
+                @runnerType, @runnerRef, @apiVersion,
+                @appClientID, @appClientSecret,
+                @notes, @createdBy, @updatedBy)
       `);
 
     const created = r.recordset[0];
@@ -82,7 +95,11 @@ router.post('/', async (req, res) => {
       action: 'CONNECTOR_CREATE',
       entityType: 'Connector',
       entityID: created.ConnectorUID,
-      details: { name: created.Name, displayName: created.DisplayName },
+      details: {
+        name: created.Name,
+        displayName: created.DisplayName,
+        hasAppClientSecret: !!appClientSecretEnc,
+      },
       ...reqMeta(req),
     });
 
@@ -100,8 +117,22 @@ router.post('/', async (req, res) => {
 router.put('/:uid', async (req, res) => {
   try {
     const b = req.body || {};
+
+    // Secret semantics: undefined = leave alone, '' or null = clear, anything else = rotate.
+    let setSecretFrag = '';
+    const secretProvided = Object.prototype.hasOwnProperty.call(b, 'appClientSecret');
+    let appClientSecretEnc = null;
+    if (secretProvided) {
+      if (b.appClientSecret === '' || b.appClientSecret === null) {
+        appClientSecretEnc = null;
+      } else {
+        appClientSecretEnc = encrypt(b.appClientSecret);
+      }
+      setSecretFrag = ', AppClientSecret_Enc = @appClientSecret';
+    }
+
     const pool = await getPool();
-    const r = await pool.request()
+    const request = pool.request()
       .input('uid', sql.UniqueIdentifier, req.params.uid)
       .input('displayName', sql.NVarChar(100), b.displayName)
       .input('authType', sql.NVarChar(30), b.authType)
@@ -110,10 +141,16 @@ router.put('/:uid', async (req, res) => {
       .input('runnerType', sql.NVarChar(30), b.runnerType || 'GENERIC')
       .input('runnerRef', sql.NVarChar(200), b.runnerRef || null)
       .input('apiVersion', sql.NVarChar(20), b.apiVersion || null)
+      .input('appClientID', sql.NVarChar(200), b.appClientID || null)
       .input('isActive', sql.Bit, b.isActive == null ? 1 : (b.isActive ? 1 : 0))
       .input('notes', sql.NVarChar(sql.MAX), b.notes || null)
-      .input('updatedBy', sql.Int, req.user.userID)
-      .query(`
+      .input('updatedBy', sql.Int, req.user.userID);
+
+    if (secretProvided) {
+      request.input('appClientSecret', sql.NVarChar(sql.MAX), appClientSecretEnc);
+    }
+
+    const r = await request.query(`
         UPDATE admin.Connectors
         SET DisplayName = @displayName,
             AuthType    = @authType,
@@ -122,10 +159,12 @@ router.put('/:uid', async (req, res) => {
             RunnerType  = @runnerType,
             RunnerRef   = @runnerRef,
             ApiVersion  = @apiVersion,
+            AppClientID = @appClientID,
             IsActive    = @isActive,
             Notes       = @notes,
             UpdatedBy   = @updatedBy,
             UpdatedAt   = SYSUTCDATETIME()
+            ${setSecretFrag}
         OUTPUT INSERTED.ConnectorUID, INSERTED.Name, INSERTED.DisplayName
         WHERE ConnectorUID = @uid
       `);
@@ -137,7 +176,11 @@ router.put('/:uid', async (req, res) => {
       action: 'CONNECTOR_UPDATE',
       entityType: 'Connector',
       entityID: req.params.uid,
-      details: { displayName: b.displayName, isActive: b.isActive },
+      details: {
+        displayName: b.displayName,
+        isActive: b.isActive,
+        appClientSecretRotated: secretProvided,
+      },
       ...reqMeta(req),
     });
 

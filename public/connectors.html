@@ -78,6 +78,22 @@
         <label>Runner Reference</label>
         <input type="text" id="fRunnerRef" placeholder="AMZ_Report_Runner.dtsx or node:amazon-reports" maxlength="200">
 
+        <div style="margin-top:22px;padding:14px;background:var(--surface2);border-radius:8px;border:1px solid var(--border)">
+          <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:4px">App-level credentials (OAuth connectors)</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">
+            For Amazon SP-API: LWA client ID + secret. For Shopify public apps, Walmart, TikTok, Extensiv: corresponding app credentials.
+            Not needed for Shopify custom apps (token is per-brand).
+          </div>
+
+          <label style="margin-top:0">App Client ID</label>
+          <input type="text" id="fAppClientID" placeholder="amzn1.application-oa2-client.xxxxxxxxxxxxxxxx" maxlength="200">
+          <div class="help-text">Amazon LWA format: <code>amzn1.application-oa2-client.xxxx</code></div>
+
+          <label>App Client Secret</label>
+          <input type="password" id="fAppClientSecret" placeholder="type to rotate — existing value stays if blank" autocomplete="off">
+          <div class="help-text" id="appSecretStatus"></div>
+        </div>
+
         <label>Notes</label>
         <textarea id="fNotes" placeholder="Freeform notes — gotchas, links, etc."></textarea>
 
@@ -145,11 +161,16 @@
         document.getElementById('fApiVersion').value = c.ApiVersion || '';
         document.getElementById('fRunnerType').value = c.RunnerType || 'GENERIC';
         document.getElementById('fRunnerRef').value = c.RunnerRef || '';
+        document.getElementById('fAppClientID').value = c.AppClientID || '';
+        document.getElementById('appSecretStatus').innerHTML = c.HasAppClientSecret
+          ? '<span style="color:var(--green)">✓ Secret is set.</span> Type a new value to rotate; leave blank to keep.'
+          : 'No secret currently stored.';
         document.getElementById('fNotes').value = c.Notes || '';
       }
     } else {
       document.getElementById('modalTitle').textContent = 'New Connector';
       document.getElementById('fName').disabled = false;
+      document.getElementById('appSecretStatus').textContent = '';
     }
     modal.classList.add('show');
   }
@@ -171,8 +192,13 @@
         apiVersion: document.getElementById('fApiVersion').value || null,
         runnerType: document.getElementById('fRunnerType').value,
         runnerRef: document.getElementById('fRunnerRef').value || null,
+        appClientID: document.getElementById('fAppClientID').value || null,
         notes: document.getElementById('fNotes').value || null,
       };
+      // Only include app secret if user typed one (preserves existing value otherwise)
+      const appSecret = document.getElementById('fAppClientSecret').value;
+      if (appSecret) payload.appClientSecret = appSecret;
+
       if (uid) {
         await api('PUT', '/api/connectors/' + uid, payload);
       } else {
