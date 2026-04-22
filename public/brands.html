@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKU Compass Admin — Brands</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/tokens.css">
+</head>
+<body data-page="brands">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Brands</div>
+        <div class="topbar-sub">Clients this admin tool manages data for</div>
+      </div>
+      <button class="btn" onclick="openModal()">+ Add Brand</button>
+    </div>
+    <div class="page-content">
+      <div id="alertBox"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Brand</th><th>Slug</th><th>BrandUID</th><th>Credentials</th><th>Status</th><th></th></tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="6" class="empty-state">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="modal">
+    <div class="modal">
+      <h2 id="modalTitle">Add Brand</h2>
+      <div class="subtitle">Register a client so we can attach credentials.</div>
+      <form id="form">
+        <input type="hidden" id="fMode" value="create">
+        <label>BrandUID <span style="color:var(--red)">*</span></label>
+        <input type="text" id="fBrandUID" placeholder="E77C2596-37EC-425D-BD88-277BFB494B72" required maxlength="36">
+        <div class="help-text">UUID from <code>skc-auth-dev.SKC_Brands.BrandUID</code>.</div>
+
+        <label>Brand name <span style="color:var(--red)">*</span></label>
+        <input type="text" id="fBrandName" placeholder="Zentoes" required maxlength="200">
+
+        <label>Brand slug <span style="color:var(--red)">*</span></label>
+        <input type="text" id="fBrandSlug" placeholder="zentoes" required maxlength="100">
+        <div class="help-text">Lowercase, URL-safe. Must be unique.</div>
+
+        <label>Data DB connection string (optional)</label>
+        <textarea id="fDataDbConnString" placeholder='{"server":"...","database":"...","user":"...","password":"..."}'></textarea>
+        <div class="help-text">Cached from skc-auth-dev.SKC_Brands.ProdSqlServerConn. Leave blank to sync later.</div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn" id="submitBtn">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script src="/sidebar.js"></script>
+<script>
+  let brands = [];
+
+  document.addEventListener('sidebarReady', load);
+
+  async function load() {
+    try {
+      const { api } = window._SKCAdmin;
+      const data = await api('GET', '/api/brands');
+      brands = data.brands;
+      render();
+    } catch (e) { alert('Load failed: ' + e.message); }
+  }
+
+  function render() {
+    const tbody = document.getElementById('tbody');
+    if (!brands.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No brands yet. Add one to attach credentials.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = brands.map(b => `
+      <tr>
+        <td>${esc(b.BrandName)}</td>
+        <td class="mono">${esc(b.BrandSlug)}</td>
+        <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc(b.BrandUID)}</td>
+        <td class="mono">${b.CredentialCount}</td>
+        <td>${b.IsActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-muted">Inactive</span>'}</td>
+        <td style="text-align:right">
+          <a class="btn btn-small btn-secondary" href="/credentials.html?brandUID=${encodeURIComponent(b.BrandUID)}">Credentials</a>
+          <button class="btn btn-small btn-secondary" onclick="openModal('${b.BrandUID}')">Edit</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function openModal(uid) {
+    const modal = document.getElementById('modal');
+    const form = document.getElementById('form');
+    form.reset();
+    if (uid) {
+      const b = brands.find(x => x.BrandUID === uid);
+      if (b) {
+        document.getElementById('modalTitle').textContent = 'Edit Brand';
+        document.getElementById('fMode').value = 'edit';
+        document.getElementById('fBrandUID').value = b.BrandUID;
+        document.getElementById('fBrandUID').disabled = true;
+        document.getElementById('fBrandName').value = b.BrandName;
+        document.getElementById('fBrandSlug').value = b.BrandSlug;
+      }
+    } else {
+      document.getElementById('modalTitle').textContent = 'Add Brand';
+      document.getElementById('fMode').value = 'create';
+      document.getElementById('fBrandUID').disabled = false;
+    }
+    modal.classList.add('show');
+  }
+  function closeModal() { document.getElementById('modal').classList.remove('show'); }
+
+  document.getElementById('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    try {
+      const { api } = window._SKCAdmin;
+      const mode = document.getElementById('fMode').value;
+      const uid = document.getElementById('fBrandUID').value.trim();
+      const payload = {
+        brandUID: uid,
+        brandName: document.getElementById('fBrandName').value.trim(),
+        brandSlug: document.getElementById('fBrandSlug').value.trim().toLowerCase(),
+        dataDbConnString: document.getElementById('fDataDbConnString').value || null,
+      };
+      if (mode === 'edit') {
+        await api('PUT', '/api/brands/' + uid, payload);
+      } else {
+        await api('POST', '/api/brands', payload);
+      }
+      closeModal();
+      await load();
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>

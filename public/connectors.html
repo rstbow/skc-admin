@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKU Compass Admin — Connectors</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/tokens.css">
+</head>
+<body data-page="connectors">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Connectors</div>
+        <div class="topbar-sub">Data source families — Amazon, Shopify, Walmart, …</div>
+      </div>
+      <button class="btn" onclick="openModal()">+ New Connector</button>
+    </div>
+    <div class="page-content">
+      <div id="alertBox"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th><th>Display</th><th>Auth</th><th>Runner</th><th>API Version</th><th>Endpoints</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="8" class="empty-state">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="modal">
+    <div class="modal">
+      <h2 id="modalTitle">New Connector</h2>
+      <div class="subtitle">Register a data source family.</div>
+      <form id="form">
+        <input type="hidden" id="fConnectorUID">
+        <label>Name <span style="color:var(--red)">*</span></label>
+        <input type="text" id="fName" placeholder="AMAZON_SP_API" required maxlength="50">
+        <div class="help-text">Uppercase identifier, no spaces. Cannot change after create.</div>
+
+        <label>Display name <span style="color:var(--red)">*</span></label>
+        <input type="text" id="fDisplayName" placeholder="Amazon Selling Partner API" required maxlength="100">
+
+        <label>Auth type <span style="color:var(--red)">*</span></label>
+        <select id="fAuthType" required>
+          <option value="OAUTH2">OAUTH2</option>
+          <option value="API_KEY">API_KEY</option>
+          <option value="CUSTOM_APP_TOKEN">CUSTOM_APP_TOKEN (Shopify)</option>
+          <option value="HMAC">HMAC (Walmart)</option>
+          <option value="BASIC">BASIC</option>
+          <option value="AWS_SIGV4">AWS_SIGV4</option>
+        </select>
+
+        <label>Base URL <span style="color:var(--red)">*</span></label>
+        <input type="url" id="fBaseURL" placeholder="https://sellingpartnerapi-na.amazon.com" required maxlength="500">
+
+        <label>Docs URL</label>
+        <input type="url" id="fDocsURL" placeholder="https://developer-docs.amazon.com/sp-api" maxlength="500">
+
+        <label>API Version</label>
+        <input type="text" id="fApiVersion" placeholder="2021-06-30 or 2026-04" maxlength="20">
+
+        <label>Runner Type</label>
+        <select id="fRunnerType">
+          <option value="GENERIC">GENERIC</option>
+          <option value="CUSTOM">CUSTOM</option>
+          <option value="SSIS">SSIS</option>
+          <option value="NODE">NODE</option>
+          <option value="DURABLE_FN">DURABLE_FN</option>
+        </select>
+
+        <label>Runner Reference</label>
+        <input type="text" id="fRunnerRef" placeholder="AMZ_Report_Runner.dtsx or node:amazon-reports" maxlength="200">
+
+        <label>Notes</label>
+        <textarea id="fNotes" placeholder="Freeform notes — gotchas, links, etc."></textarea>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn" id="submitBtn">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script src="/sidebar.js"></script>
+<script>
+  let connectors = [];
+
+  document.addEventListener('sidebarReady', load);
+
+  async function load() {
+    try {
+      const { api } = window._SKCAdmin;
+      const data = await api('GET', '/api/connectors');
+      connectors = data.connectors;
+      render();
+    } catch (e) { alert('Load failed: ' + e.message); }
+  }
+
+  function render() {
+    const tbody = document.getElementById('tbody');
+    if (!connectors.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No connectors yet.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = connectors.map(c => `
+      <tr>
+        <td class="mono">${esc(c.Name)}</td>
+        <td>${esc(c.DisplayName)}</td>
+        <td><span class="badge badge-muted">${esc(c.AuthType)}</span></td>
+        <td class="mono" style="color:var(--text-muted)">${esc(c.RunnerType || '—')}</td>
+        <td class="mono" style="color:var(--text-muted)">${esc(c.ApiVersion || '—')}</td>
+        <td class="mono">${c.EndpointCount}</td>
+        <td>${c.IsActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-muted">Inactive</span>'}</td>
+        <td style="text-align:right">
+          <button class="btn btn-small btn-secondary" onclick="openModal('${c.ConnectorUID}')">Edit</button>
+          ${c.IsActive ? `<button class="btn btn-small btn-danger" onclick="deactivate('${c.ConnectorUID}','${esc(c.Name)}')">Deactivate</button>` : ''}
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function openModal(uid) {
+    const modal = document.getElementById('modal');
+    const form = document.getElementById('form');
+    form.reset();
+    document.getElementById('fConnectorUID').value = uid || '';
+    if (uid) {
+      const c = connectors.find(x => x.ConnectorUID === uid);
+      if (c) {
+        document.getElementById('modalTitle').textContent = 'Edit Connector';
+        document.getElementById('fName').value = c.Name;
+        document.getElementById('fName').disabled = true;
+        document.getElementById('fDisplayName').value = c.DisplayName;
+        document.getElementById('fAuthType').value = c.AuthType;
+        document.getElementById('fBaseURL').value = c.BaseURL;
+        document.getElementById('fDocsURL').value = c.DocsURL || '';
+        document.getElementById('fApiVersion').value = c.ApiVersion || '';
+        document.getElementById('fRunnerType').value = c.RunnerType || 'GENERIC';
+        document.getElementById('fRunnerRef').value = c.RunnerRef || '';
+        document.getElementById('fNotes').value = c.Notes || '';
+      }
+    } else {
+      document.getElementById('modalTitle').textContent = 'New Connector';
+      document.getElementById('fName').disabled = false;
+    }
+    modal.classList.add('show');
+  }
+  function closeModal() { document.getElementById('modal').classList.remove('show'); }
+
+  document.getElementById('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    try {
+      const { api } = window._SKCAdmin;
+      const uid = document.getElementById('fConnectorUID').value;
+      const payload = {
+        name: document.getElementById('fName').value,
+        displayName: document.getElementById('fDisplayName').value,
+        authType: document.getElementById('fAuthType').value,
+        baseURL: document.getElementById('fBaseURL').value,
+        docsURL: document.getElementById('fDocsURL').value || null,
+        apiVersion: document.getElementById('fApiVersion').value || null,
+        runnerType: document.getElementById('fRunnerType').value,
+        runnerRef: document.getElementById('fRunnerRef').value || null,
+        notes: document.getElementById('fNotes').value || null,
+      };
+      if (uid) {
+        await api('PUT', '/api/connectors/' + uid, payload);
+      } else {
+        await api('POST', '/api/connectors', payload);
+      }
+      closeModal();
+      await load();
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  async function deactivate(uid, name) {
+    if (!confirm('Deactivate connector "' + name + '"? Existing data stays; no new pulls will run.')) return;
+    try {
+      await window._SKCAdmin.api('DELETE', '/api/connectors/' + uid);
+      await load();
+    } catch (e) { alert('Deactivate failed: ' + e.message); }
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>

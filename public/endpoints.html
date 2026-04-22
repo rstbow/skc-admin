@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKU Compass Admin — Endpoints</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/tokens.css">
+</head>
+<body data-page="endpoints">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Endpoints</div>
+        <div class="topbar-sub">Registry rows — each defines a report/API call to pull</div>
+      </div>
+      <button class="btn" onclick="openModal()">+ New Endpoint</button>
+    </div>
+    <div class="page-content">
+      <div id="alertBox"></div>
+      <div style="margin-bottom:14px">
+        <label style="margin-top:0">Filter by connector</label>
+        <select id="filterConnector" style="max-width:320px" onchange="load()">
+          <option value="">All connectors</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Connector</th><th>Name</th><th>Type</th><th>Target Table</th><th>Version</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="7" class="empty-state">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <div class="modal-backdrop" id="modal">
+    <div class="modal">
+      <h2 id="modalTitle">New Endpoint</h2>
+      <div class="subtitle">Define a pullable data source.</div>
+      <form id="form">
+        <input type="hidden" id="fEndpointUID">
+
+        <label>Connector <span style="color:var(--red)">*</span></label>
+        <select id="fConnectorUID" required></select>
+
+        <label>Name <span style="color:var(--red)">*</span></label>
+        <input type="text" id="fName" placeholder="AMZ_FBA_INVENTORY_BY_COUNTRY" required maxlength="100">
+        <div class="help-text">Unique per connector. Uppercase, no spaces.</div>
+
+        <label>Display name <span style="color:var(--red)">*</span></label>
+        <input type="text" id="fDisplayName" placeholder="FBA Inventory by Country" required maxlength="200">
+
+        <label>Description</label>
+        <textarea id="fDescription" placeholder="What this pull retrieves, how often, any gotchas."></textarea>
+
+        <label>Endpoint type <span style="color:var(--red)">*</span></label>
+        <select id="fEndpointType" required>
+          <option value="REPORT">REPORT (async, e.g. SP-API reports)</option>
+          <option value="REST_GET">REST_GET</option>
+          <option value="REST_POST">REST_POST</option>
+          <option value="GRAPHQL">GRAPHQL</option>
+          <option value="GRAPHQL_BULK">GRAPHQL_BULK (Shopify bulk ops)</option>
+          <option value="WEBHOOK">WEBHOOK</option>
+        </select>
+
+        <label>HTTP method</label>
+        <input type="text" id="fHttpMethod" placeholder="GET / POST" maxlength="10">
+
+        <label>Path / report type</label>
+        <input type="text" id="fPath" placeholder="/reports/2021-06-30/reports OR GET_FBA_MYI_ALL_INVENTORY_DATA" maxlength="500">
+
+        <label>Target schema</label>
+        <input type="text" id="fTargetSchema" value="raw" maxlength="50">
+
+        <label>Target table <span style="color:var(--red)">*</span></label>
+        <input type="text" id="fTargetTable" placeholder="amz_fba_inventory" required maxlength="128">
+
+        <label>Natural key columns</label>
+        <input type="text" id="fNaturalKeys" placeholder="sku, snapshot_date" maxlength="500">
+        <div class="help-text">Comma-separated. Used for MERGE upsert.</div>
+
+        <label>Pagination strategy</label>
+        <select id="fPaginationStrategy">
+          <option value="">—</option>
+          <option value="NONE">NONE</option>
+          <option value="CURSOR">CURSOR</option>
+          <option value="OFFSET">OFFSET</option>
+          <option value="NEXT_TOKEN">NEXT_TOKEN</option>
+          <option value="LINK_HEADER">LINK_HEADER (Shopify REST)</option>
+          <option value="GRAPHQL_CURSOR">GRAPHQL_CURSOR</option>
+        </select>
+
+        <label>Poll interval (seconds)</label>
+        <input type="number" id="fPollIntervalSec" placeholder="30" min="1">
+
+        <label>Poll max attempts</label>
+        <input type="number" id="fPollMaxAttempts" placeholder="60" min="1">
+
+        <label>Rate limit weight</label>
+        <input type="number" id="fRateLimitWeight" value="1" min="1">
+
+        <label>Transform proc (optional)</label>
+        <input type="text" id="fTransformProc" placeholder="raw.usp_parse_amz_orders" maxlength="200">
+
+        <label>Params template (JSON, optional)</label>
+        <textarea id="fParamsTemplate" placeholder='{"reportType":"GET_FLAT_FILE_ALL_ORDERS_DATA_BY_LAST_UPDATE_GENERAL"}'></textarea>
+
+        <label>Notes</label>
+        <textarea id="fNotes"></textarea>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+          <button type="submit" class="btn" id="submitBtn">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+<script src="/sidebar.js"></script>
+<script>
+  let endpoints = [];
+  let connectors = [];
+
+  document.addEventListener('sidebarReady', async () => {
+    try {
+      const { api } = window._SKCAdmin;
+      const c = await api('GET', '/api/connectors');
+      connectors = c.connectors.filter(x => x.IsActive);
+      const sel = document.getElementById('filterConnector');
+      sel.innerHTML = '<option value="">All connectors</option>' +
+        connectors.map(c => `<option value="${c.ConnectorUID}">${esc(c.DisplayName)}</option>`).join('');
+      const modalSel = document.getElementById('fConnectorUID');
+      modalSel.innerHTML = connectors.map(c => `<option value="${c.ConnectorUID}">${esc(c.DisplayName)}</option>`).join('');
+      await load();
+    } catch (e) { alert('Init failed: ' + e.message); }
+  });
+
+  async function load() {
+    try {
+      const { api } = window._SKCAdmin;
+      const uid = document.getElementById('filterConnector').value;
+      const qs = uid ? '?connectorUID=' + encodeURIComponent(uid) : '';
+      const data = await api('GET', '/api/endpoints' + qs);
+      endpoints = data.endpoints;
+      render();
+    } catch (e) { alert('Load failed: ' + e.message); }
+  }
+
+  function render() {
+    const tbody = document.getElementById('tbody');
+    if (!endpoints.length) {
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No endpoints yet. Click “+ New Endpoint”.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = endpoints.map(e => `
+      <tr>
+        <td class="mono">${esc(e.ConnectorName)}</td>
+        <td><div>${esc(e.DisplayName)}</div><div class="mono" style="font-size:11px;color:var(--text-dim)">${esc(e.Name)}</div></td>
+        <td><span class="badge badge-muted">${esc(e.EndpointType)}</span></td>
+        <td class="mono">${esc(e.TargetSchema)}.${esc(e.TargetTable)}</td>
+        <td class="mono">v${e.Version}</td>
+        <td>${e.IsActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-muted">Inactive</span>'}</td>
+        <td style="text-align:right">
+          <button class="btn btn-small btn-secondary" onclick="openModal('${e.EndpointUID}')">Edit</button>
+          ${e.IsActive ? `<button class="btn btn-small btn-danger" onclick="deactivate('${e.EndpointUID}','${esc(e.Name)}')">Deactivate</button>` : ''}
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  function openModal(uid) {
+    const modal = document.getElementById('modal');
+    const form = document.getElementById('form');
+    form.reset();
+    document.getElementById('fEndpointUID').value = uid || '';
+    document.getElementById('fTargetSchema').value = 'raw';
+    document.getElementById('fRateLimitWeight').value = 1;
+    if (uid) {
+      const e = endpoints.find(x => x.EndpointUID === uid);
+      if (e) {
+        document.getElementById('modalTitle').textContent = 'Edit Endpoint';
+        document.getElementById('fConnectorUID').value = e.ConnectorUID;
+        document.getElementById('fConnectorUID').disabled = true;
+        document.getElementById('fName').value = e.Name;
+        document.getElementById('fName').disabled = true;
+        document.getElementById('fDisplayName').value = e.DisplayName;
+        document.getElementById('fDescription').value = e.Description || '';
+        document.getElementById('fEndpointType').value = e.EndpointType;
+        document.getElementById('fHttpMethod').value = e.HttpMethod || '';
+        document.getElementById('fPath').value = e.Path || '';
+        document.getElementById('fTargetSchema').value = e.TargetSchema;
+        document.getElementById('fTargetTable').value = e.TargetTable;
+        document.getElementById('fNaturalKeys').value = e.NaturalKeyColumns || '';
+        document.getElementById('fPaginationStrategy').value = ''; // backend returns full name, user can set if needed
+        document.getElementById('fRateLimitWeight').value = e.RateLimitWeight || 1;
+        document.getElementById('fTransformProc').value = ''; // not included in list response
+      }
+    } else {
+      document.getElementById('modalTitle').textContent = 'New Endpoint';
+      document.getElementById('fConnectorUID').disabled = false;
+      document.getElementById('fName').disabled = false;
+    }
+    modal.classList.add('show');
+  }
+  function closeModal() { document.getElementById('modal').classList.remove('show'); }
+
+  document.getElementById('form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('submitBtn');
+    btn.disabled = true;
+    try {
+      const { api } = window._SKCAdmin;
+      const uid = document.getElementById('fEndpointUID').value;
+      const payload = {
+        connectorUID: document.getElementById('fConnectorUID').value,
+        name: document.getElementById('fName').value,
+        displayName: document.getElementById('fDisplayName').value,
+        description: document.getElementById('fDescription').value || null,
+        endpointType: document.getElementById('fEndpointType').value,
+        httpMethod: document.getElementById('fHttpMethod').value || null,
+        path: document.getElementById('fPath').value || null,
+        targetSchema: document.getElementById('fTargetSchema').value || 'raw',
+        targetTable: document.getElementById('fTargetTable').value,
+        naturalKeyColumns: document.getElementById('fNaturalKeys').value || null,
+        paginationStrategy: document.getElementById('fPaginationStrategy').value || null,
+        pollIntervalSec: parseInt(document.getElementById('fPollIntervalSec').value, 10) || null,
+        pollMaxAttempts: parseInt(document.getElementById('fPollMaxAttempts').value, 10) || null,
+        rateLimitWeight: parseInt(document.getElementById('fRateLimitWeight').value, 10) || 1,
+        transformProc: document.getElementById('fTransformProc').value || null,
+        paramsTemplate: document.getElementById('fParamsTemplate').value || null,
+        notes: document.getElementById('fNotes').value || null,
+      };
+      if (uid) await api('PUT', '/api/endpoints/' + uid, payload);
+      else     await api('POST', '/api/endpoints', payload);
+      closeModal();
+      await load();
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  async function deactivate(uid, name) {
+    if (!confirm('Deactivate endpoint "' + name + '"?')) return;
+    try {
+      await window._SKCAdmin.api('DELETE', '/api/endpoints/' + uid);
+      await load();
+    } catch (e) { alert('Deactivate failed: ' + e.message); }
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>

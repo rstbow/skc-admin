@@ -6,95 +6,93 @@
 <title>SKU Compass Admin — Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
-<style>
-  :root {
-    --orange: #f97316;
-    --bg: #09090f;
-    --surface: #13131a;
-    --surface2: #1a1a24;
-    --border: rgba(255,255,255,0.07);
-    --text: #f0f0f8;
-    --text-muted: #9090a8;
-    --text-dim: #555568;
-  }
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    font-family: 'DM Sans', sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    min-height: 100vh;
-    padding: 40px;
-  }
-  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; }
-  .brand { display: flex; align-items: center; gap: 10px; }
-  .logo-mark {
-    width: 28px; height: 28px;
-    background: var(--orange); border-radius: 7px;
-    display: flex; align-items: center; justify-content: center;
-    font-family: 'Space Mono', monospace;
-    font-size: 11px; font-weight: 700; color: white;
-  }
-  .logo-name { font-size: 14px; font-weight: 700; }
-  .user-info { font-size: 13px; color: var(--text-muted); }
-  .logout { font-size: 12px; color: var(--orange); margin-left: 12px; cursor: pointer; background: none; border: none; }
-  h1 { font-size: 22px; margin-bottom: 6px; }
-  .subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 28px; }
-  .placeholder {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 30px;
-    color: var(--text-muted);
-    font-size: 14px;
-  }
-  .placeholder strong { color: var(--text); display: block; margin-bottom: 6px; }
-  code { background: var(--surface2); padding: 2px 6px; border-radius: 4px; font-family: 'Space Mono', monospace; font-size: 12px; }
-</style>
+<link rel="stylesheet" href="/css/tokens.css">
 </head>
-<body>
-  <div class="topbar">
-    <div class="brand">
-      <div class="logo-mark">SC</div>
-      <div class="logo-name">SKU Compass Admin</div>
+<body data-page="dashboard">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Dashboard</div>
+        <div class="topbar-sub">System health + recent activity</div>
+      </div>
     </div>
-    <div>
-      <span class="user-info" id="userInfo">—</span>
-      <button class="logout" onclick="logout()">Sign out</button>
+    <div class="page-content">
+      <div id="alertBox"></div>
+
+      <div class="stats-grid" id="statsGrid">
+        <div class="stat-card"><div class="stat-label">Connectors</div><div class="stat-value" id="sActiveConnectors">—</div><div class="stat-sub">active</div></div>
+        <div class="stat-card"><div class="stat-label">Endpoints</div><div class="stat-value" id="sActiveEndpoints">—</div><div class="stat-sub">active</div></div>
+        <div class="stat-card"><div class="stat-label">Brands</div><div class="stat-value" id="sActiveBrands">—</div><div class="stat-sub">active</div></div>
+        <div class="stat-card"><div class="stat-label">Jobs</div><div class="stat-value" id="sActiveJobs">—</div><div class="stat-sub">scheduled</div></div>
+        <div class="stat-card"><div class="stat-label">Runs (24h)</div><div class="stat-value" id="sRuns24">—</div><div class="stat-sub" id="sFails24">— failed</div></div>
+      </div>
+
+      <div class="card">
+        <h2>Recent runs</h2>
+        <div class="subtitle">Latest 10 job runs across all connectors</div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Started</th><th>Connector</th><th>Endpoint</th><th>Status</th><th>Duration</th><th>Rows</th>
+              </tr>
+            </thead>
+            <tbody id="recentRunsBody">
+              <tr><td colspan="6" class="empty-state">No runs yet. Workers ship in Phase 3.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
-  </div>
+  </main>
 
-  <h1>Dashboard</h1>
-  <div class="subtitle">Phase 1 — control plane scaffold</div>
-
-  <div class="placeholder">
-    <strong>Phase 1 status</strong>
-    You're logged in. The admin tool shell is running.<br><br>
-    Coming next (Session 2+):<br>
-    • <code>/connectors</code> — list + "Add Connector" wizard<br>
-    • <code>/endpoints</code> — endpoint catalog<br>
-    • <code>/brands</code> — per-brand credentials<br>
-    • <code>/runs</code> — run history (will populate once workers ship in Phase 3)
-  </div>
-
+<script src="/sidebar.js"></script>
 <script>
-  const token = sessionStorage.getItem('skc_admin_token');
-  const userStr = sessionStorage.getItem('skc_admin_user');
-
-  if (!token || !userStr) {
-    window.location.href = '/login.html';
-  } else {
+  document.addEventListener('sidebarReady', async () => {
+    const { api } = window._SKCAdmin;
     try {
-      const user = JSON.parse(userStr);
-      document.getElementById('userInfo').textContent = user.email;
-    } catch (e) {
-      logout();
-    }
-  }
+      const [{ stats }, { runs }] = await Promise.all([
+        api('GET', '/api/runs/stats'),
+        api('GET', '/api/runs?limit=10'),
+      ]);
 
-  function logout() {
-    sessionStorage.removeItem('skc_admin_token');
-    sessionStorage.removeItem('skc_admin_user');
-    window.location.href = '/login.html';
+      document.getElementById('sActiveConnectors').textContent = stats.ActiveConnectors;
+      document.getElementById('sActiveEndpoints').textContent  = stats.ActiveEndpoints;
+      document.getElementById('sActiveBrands').textContent     = stats.ActiveBrands;
+      document.getElementById('sActiveJobs').textContent       = stats.ActiveJobs;
+      document.getElementById('sRuns24').textContent           = stats.RunsLast24h;
+      const fails = stats.FailsLast24h;
+      const failEl = document.getElementById('sFails24');
+      failEl.textContent = fails + ' failed';
+      if (fails > 0) failEl.style.color = 'var(--red)';
+
+      if (runs.length) {
+        const tbody = document.getElementById('recentRunsBody');
+        tbody.innerHTML = runs.map(r => `
+          <tr>
+            <td class="mono">${new Date(r.StartedAt).toLocaleString()}</td>
+            <td>${escapeHtml(r.ConnectorDisplay)}</td>
+            <td>${escapeHtml(r.EndpointDisplay)}</td>
+            <td><span class="badge badge-${statusBadge(r.Status)}">${r.Status}</span></td>
+            <td class="mono">${r.DurationMs ? (r.DurationMs/1000).toFixed(1)+'s' : '—'}</td>
+            <td class="mono">${r.RowsIngested ?? '—'}</td>
+          </tr>
+        `).join('');
+      }
+    } catch (e) {
+      document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+escapeHtml(e.message)+'</div>';
+    }
+  });
+
+  function statusBadge(s) {
+    return s === 'SUCCESS' ? 'green'
+         : s === 'FAILED'  ? 'red'
+         : s === 'RUNNING' ? 'blue'
+         : s === 'PARTIAL' ? 'yellow'
+         : 'muted';
+  }
+  function escapeHtml(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 </script>
 </body>

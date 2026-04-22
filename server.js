@@ -38,12 +38,21 @@ function safeRequire(filePath, label) {
 }
 
 // API routes
-app.use('/api/auth', safeRequire('./routes/auth', 'auth'));
-// Future: /api/connectors, /api/endpoints, /api/brands, /api/jobs, /api/runs
+app.use('/api/auth',        safeRequire('./routes/auth',        'auth'));
+app.use('/api/connectors',  safeRequire('./routes/connectors',  'connectors'));
+app.use('/api/endpoints',   safeRequire('./routes/endpoints',   'endpoints'));
+app.use('/api/brands',      safeRequire('./routes/brands',      'brands'));
+app.use('/api/credentials', safeRequire('./routes/credentials', 'credentials'));
+app.use('/api/runs',        safeRequire('./routes/runs',        'runs'));
 
 // Default route — serve login page
 app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
+});
+
+// Dashboard shortcut
+app.get('/dashboard', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'dashboard.html'));
 });
 
 // 404

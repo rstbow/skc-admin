@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKU Compass Admin — Runs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/tokens.css">
+</head>
+<body data-page="runs">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Runs</div>
+        <div class="topbar-sub">Ingestion run history across all connectors</div>
+      </div>
+      <button class="btn btn-secondary" onclick="load()">↻ Refresh</button>
+    </div>
+    <div class="page-content">
+      <div id="alertBox"></div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px">
+          <div>
+            <label style="margin-top:0">Status</label>
+            <select id="fStatus" onchange="load()">
+              <option value="">All</option>
+              <option value="RUNNING">Running</option>
+              <option value="SUCCESS">Success</option>
+              <option value="FAILED">Failed</option>
+              <option value="PARTIAL">Partial</option>
+              <option value="CANCELED">Canceled</option>
+            </select>
+          </div>
+          <div>
+            <label style="margin-top:0">Connector</label>
+            <select id="fConnector" onchange="onConnectorChange()">
+              <option value="">All</option>
+            </select>
+          </div>
+          <div>
+            <label style="margin-top:0">Since</label>
+            <select id="fSince" onchange="load()">
+              <option value="">All time</option>
+              <option value="1">Last 1 hour</option>
+              <option value="6">Last 6 hours</option>
+              <option value="24" selected>Last 24 hours</option>
+              <option value="168">Last 7 days</option>
+              <option value="720">Last 30 days</option>
+            </select>
+          </div>
+          <div>
+            <label style="margin-top:0">Limit</label>
+            <select id="fLimit" onchange="load()">
+              <option value="50">50</option>
+              <option value="100" selected>100</option>
+              <option value="250">250</option>
+              <option value="500">500</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Started</th><th>Connector</th><th>Endpoint</th><th>Status</th>
+              <th>Duration</th><th>Rows</th><th>Trigger</th><th>Worker</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <tr><td colspan="8" class="empty-state">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+<script src="/sidebar.js"></script>
+<script>
+  document.addEventListener('sidebarReady', async () => {
+    try {
+      const { api } = window._SKCAdmin;
+      const c = await api('GET', '/api/connectors');
+      const sel = document.getElementById('fConnector');
+      sel.innerHTML = '<option value="">All</option>' +
+        c.connectors.filter(x => x.IsActive).map(x => `<option value="${x.ConnectorUID}">${esc(x.DisplayName)}</option>`).join('');
+      await load();
+    } catch (e) {
+      document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
+    }
+  });
+
+  function onConnectorChange() { load(); }
+
+  async function load() {
+    try {
+      const { api } = window._SKCAdmin;
+      const params = new URLSearchParams();
+      const status = document.getElementById('fStatus').value;
+      const since = document.getElementById('fSince').value;
+      const limit = document.getElementById('fLimit').value;
+      if (status) params.set('status', status);
+      if (since)  params.set('sinceHours', since);
+      if (limit)  params.set('limit', limit);
+      // Connector filter is applied client-side because the API doesn't accept connector yet
+      const data = await api('GET', '/api/runs?' + params.toString());
+      let runs = data.runs;
+      const cuid = document.getElementById('fConnector').value;
+      if (cuid) runs = runs.filter(r => r.ConnectorUID === cuid);
+      render(runs);
+    } catch (e) { alert('Load failed: ' + e.message); }
+  }
+
+  function render(runs) {
+    const tbody = document.getElementById('tbody');
+    if (!runs.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="empty-state">No runs yet. Runs populate once workers ship in Phase 3.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = runs.map(r => `
+      <tr>
+        <td class="mono">${new Date(r.StartedAt).toLocaleString()}</td>
+        <td>${esc(r.ConnectorDisplay)}</td>
+        <td><div>${esc(r.EndpointDisplay)}</div><div class="mono" style="font-size:11px;color:var(--text-dim)">${esc(r.EndpointName)}</div></td>
+        <td><span class="badge badge-${statusBadge(r.Status)}">${r.Status}</span></td>
+        <td class="mono">${r.DurationMs ? (r.DurationMs/1000).toFixed(1)+'s' : '—'}</td>
+        <td class="mono">${r.RowsIngested ?? '—'}</td>
+        <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc(r.TriggeredBy)}</td>
+        <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc(r.WorkerType || '—')}</td>
+      </tr>
+    `).join('');
+  }
+
+  function statusBadge(s) {
+    return s === 'SUCCESS' ? 'green'
+         : s === 'FAILED'  ? 'red'
+         : s === 'RUNNING' ? 'blue'
+         : s === 'PARTIAL' ? 'yellow'
+         : 'muted';
+  }
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>
