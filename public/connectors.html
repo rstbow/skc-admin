@@ -55,6 +55,8 @@
           <option value="HMAC">HMAC (Walmart)</option>
           <option value="BASIC">BASIC</option>
           <option value="AWS_SIGV4">AWS_SIGV4</option>
+          <option value="SQL_CONNECTION">SQL_CONNECTION (internal, uses brand's DataDbConnString)</option>
+          <option value="NONE">NONE (public / no auth)</option>
         </select>
 
         <label>Base URL <span style="color:var(--red)">*</span></label>
@@ -73,6 +75,7 @@
           <option value="SSIS">SSIS</option>
           <option value="NODE">NODE</option>
           <option value="DURABLE_FN">DURABLE_FN</option>
+          <option value="INTERNAL_SQL">INTERNAL_SQL (query brand's own DB)</option>
         </select>
 
         <label>Runner Reference</label>

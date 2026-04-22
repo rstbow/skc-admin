@@ -252,6 +252,7 @@ router.post('/:credentialID(\\d+)/test', async (req, res) => {
     };
     const cred = {
       CredentialID: row.CredentialID,
+      BrandUID: row.BrandUID,
       AccountIdentifier: row.AccountIdentifier,
       MarketplaceIDs: row.MarketplaceIDs,
       Region: row.Region,

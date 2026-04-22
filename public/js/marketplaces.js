@@ -109,5 +109,15 @@
       accountIdentifierLabel: '3PL / Tenant ID',
       accountIdentifierHelp: 'Extensiv 3PL or tenant identifier provisioned by Extensiv.',
     },
+
+    SKU_COMPASS: {
+      hasRegions: false,
+      mustPickRegion: false,
+      internal: true,
+      accountIdentifierLabel: 'Not applicable',
+      accountIdentifierHelp:
+        'SKU Compass is an internal connector. It uses the brand\'s DataDbConnString from the Brands page — ' +
+        'no per-brand credentials need to be added here.',
+    },
   };
 })();
