@@ -3,6 +3,7 @@ const { sql, getPool } = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
 const { encrypt } = require('../config/crypto');
 const { logAction, reqMeta } = require('../db/queries/audit');
+const { testConnection } = require('../lib/connectorTests');
 
 const router = express.Router();
 router.use(requireAuth);
@@ -215,6 +216,89 @@ router.put('/:credentialID(\\d+)', async (req, res) => {
       return res.status(409).json({ error: 'Would create a duplicate. Another credential already uses that AccountIdentifier/Region for this brand + connector.' });
     }
     res.status(500).json({ error: 'Failed to update credential: ' + e.message });
+  }
+});
+
+/* ---------- POST /api/credentials/:credentialID/test — live connectivity test ---------- */
+router.post('/:credentialID(\\d+)/test', async (req, res) => {
+  try {
+    const pool = await getPool();
+    const credID = parseInt(req.params.credentialID, 10);
+    const r = await pool.request()
+      .input('id', sql.Int, credID)
+      .query(`
+        SELECT bc.CredentialID, bc.BrandUID, bc.ConnectorID, bc.AccountIdentifier,
+               bc.MarketplaceIDs, bc.Region, bc.RefreshToken_Enc, bc.AccessToken_Enc,
+               bc.AccessTokenExpiresAt, bc.ApiKey_Enc, bc.AppSecret_Enc, bc.ExtraConfig,
+               c.ConnectorUID, c.Name, c.DisplayName, c.AuthType, c.BaseURL,
+               c.AppClientID, c.AppClientSecret_Enc, c.ApiVersion, c.CredentialScope
+        FROM admin.BrandCredentials bc
+        JOIN admin.Connectors c ON c.ConnectorID = bc.ConnectorID
+        WHERE bc.CredentialID = @id
+      `);
+    if (!r.recordset.length) return res.status(404).json({ error: 'Credential not found' });
+
+    const row = r.recordset[0];
+    const connector = {
+      ConnectorUID: row.ConnectorUID,
+      Name: row.Name,
+      DisplayName: row.DisplayName,
+      AuthType: row.AuthType,
+      BaseURL: row.BaseURL,
+      AppClientID: row.AppClientID,
+      AppClientSecret_Enc: row.AppClientSecret_Enc,
+      ApiVersion: row.ApiVersion,
+      CredentialScope: row.CredentialScope,
+    };
+    const cred = {
+      CredentialID: row.CredentialID,
+      AccountIdentifier: row.AccountIdentifier,
+      MarketplaceIDs: row.MarketplaceIDs,
+      Region: row.Region,
+      RefreshToken_Enc: row.RefreshToken_Enc,
+      AccessToken_Enc: row.AccessToken_Enc,
+      AccessTokenExpiresAt: row.AccessTokenExpiresAt,
+      ApiKey_Enc: row.ApiKey_Enc,
+      AppSecret_Enc: row.AppSecret_Enc,
+      ExtraConfig: row.ExtraConfig,
+    };
+
+    const result = await testConnection({ connector, cred });
+
+    // Record outcome on the credential row
+    const updateReq = pool.request().input('id', sql.Int, credID);
+    if (result.ok) {
+      await updateReq.query(`
+        UPDATE admin.BrandCredentials
+        SET LastAuthedAt = SYSUTCDATETIME(),
+            LastAuthError = NULL,
+            UpdatedAt = SYSUTCDATETIME()
+        WHERE CredentialID = @id
+      `);
+    } else {
+      await updateReq
+        .input('err', sql.NVarChar(sql.MAX), String(result.message || 'Unknown error').slice(0, 2000))
+        .query(`
+          UPDATE admin.BrandCredentials
+          SET LastAuthError = @err,
+              UpdatedAt = SYSUTCDATETIME()
+          WHERE CredentialID = @id
+        `);
+    }
+
+    await logAction({
+      userID: req.user.userID,
+      action: 'CREDENTIAL_TEST',
+      entityType: 'BrandCredential',
+      entityID: String(credID),
+      details: { ok: result.ok, partial: !!result.partial, connector: connector.Name, message: result.message },
+      ...reqMeta(req),
+    });
+
+    res.json({ result });
+  } catch (e) {
+    console.error('[credentials/test]', e);
+    res.status(500).json({ error: 'Test failed: ' + e.message });
   }
 });
 
