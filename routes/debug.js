@@ -139,7 +139,7 @@ router.post('/amazon/financial-events', async (req, res) => {
            + '&MaxResultsPerPage=100';
     };
 
-    const { pages, hitCap } = await paginateSpApi(ctx, buildPath, (payload) => {
+    const { pages, hitCap, capReason, elapsedMs } = await paginateSpApi(ctx, buildPath, (payload) => {
       const events = payload.FinancialEvents || {};
       // Merge all known event lists (any list name ending in EventList)
       for (const key of Object.keys(events)) {
@@ -147,10 +147,20 @@ router.post('/amazon/financial-events', async (req, res) => {
           addToList(key, events[key]);
         }
       }
-    }, { maxPages: 200, pageDelayMs: 300 });
+    }, { maxPages: 60, pageDelayMs: 300, maxElapsedMs: 60_000 });
 
     const summary = summarizeFinancialEvents(allEvents);
     const shipmentEvents = compactShipmentEvents(allEvents.ShipmentEventList || []);
+
+    // Compute the actual date range covered (useful when truncated)
+    let earliestPosted = null, latestPosted = null;
+    for (const ev of allEvents.ShipmentEventList || []) {
+      if (ev.PostedDate) {
+        const t = new Date(ev.PostedDate).getTime();
+        if (!earliestPosted || t < earliestPosted) earliestPosted = t;
+        if (!latestPosted   || t > latestPosted)   latestPosted = t;
+      }
+    }
 
     // ---- COG lookup from brand's data DB ----
     const skuQtyMap = {}; // sku -> total qty shipped in window
@@ -219,7 +229,18 @@ router.post('/amazon/financial-events', async (req, res) => {
       profitMarginPct: summary.sales.grossSales > 0
         ? round2((netProfit / summary.sales.grossSales) * 100)
         : null,
-      pagination: { pages, totalEvents, hitCap },
+      pagination: {
+        pages,
+        totalEvents,
+        hitCap,
+        capReason,
+        elapsedMs,
+        eventsPerDay: days > 0 ? Math.round(totalEvents / days) : null,
+        actualRange: {
+          earliestPosted: earliestPosted ? new Date(earliestPosted).toISOString() : null,
+          latestPosted:   latestPosted   ? new Date(latestPosted).toISOString()   : null,
+        },
+      },
       // First 20 shipment events for drill-down detail
       shipmentEvents: shipmentEvents.slice(0, 20),
       rawSample: {

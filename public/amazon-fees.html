@@ -111,9 +111,8 @@
               <option value="7" selected>Last 7 days</option>
               <option value="14">Last 14 days</option>
               <option value="30">Last 30 days</option>
-              <option value="60">Last 60 days</option>
-              <option value="90">Last 90 days</option>
             </select>
+            <div class="help-text" id="volumeHint"></div>
           </div>
           <div>
             <button class="btn" id="runBtn" onclick="runPull()">Pull fees</button>
@@ -214,21 +213,86 @@
           ${esc(c.BrandName)} — ${esc(c.Region || 'NA')} ${c.AccountIdentifier ? '(' + esc(c.AccountIdentifier) + ')' : ''}
         </option>
       `).join('');
+      sel.addEventListener('change', updateVolumeHint);
+      updateVolumeHint();
     } catch (e) {
       document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
     }
   });
+
+  function updateVolumeHint() {
+    const credID = document.getElementById('fCredential').value;
+    const hint = document.getElementById('volumeHint');
+    if (!hint) return;
+    const est = credID && getCachedVolume(credID);
+    if (est) {
+      const maxDays = Math.max(1, Math.floor(6000 / est));
+      hint.innerHTML = '~' + est.toLocaleString() + ' events/day observed. Recommended window: up to ' + maxDays + ' day' + (maxDays === 1 ? '' : 's') + ' without truncation.';
+    } else {
+      hint.textContent = 'Pull Today or 7 days first to size this brand.';
+    }
+  }
+
+  // Per-credential volume cache: credentialID -> eventsPerDay
+  // Populated after each pull, read before the next to adapt warnings.
+  const VOLUME_CACHE_KEY = 'skcAdminAmazonVolume';
+  function cacheVolume(credID, eventsPerDay) {
+    try {
+      const c = JSON.parse(sessionStorage.getItem(VOLUME_CACHE_KEY) || '{}');
+      c[credID] = eventsPerDay;
+      sessionStorage.setItem(VOLUME_CACHE_KEY, JSON.stringify(c));
+    } catch (_) { /* ignore */ }
+  }
+  function getCachedVolume(credID) {
+    try {
+      const c = JSON.parse(sessionStorage.getItem(VOLUME_CACHE_KEY) || '{}');
+      return c[credID] || null;
+    } catch (_) { return null; }
+  }
 
   async function runPull() {
     const btn = document.getElementById('runBtn');
     const credID = document.getElementById('fCredential').value;
     const windowVal = document.getElementById('fDays').value;
     if (!credID) return;
+
+    // Guardrail: warn before starting a pull that will likely take long or truncate.
+    const days = windowVal === 'today' ? 1 : parseInt(windowVal, 10);
+    const estPerDay = getCachedVolume(credID);
+    if (estPerDay && days >= 7) {
+      const estTotal = Math.round(estPerDay * days);
+      // 6000 events ≈ 60 pages ≈ server time budget
+      if (estTotal > 6000) {
+        const maxDays = Math.max(1, Math.floor(6000 / estPerDay));
+        const ok = confirm(
+          'Heads up: this brand averages ~' + estPerDay.toLocaleString() + ' events/day.\n\n' +
+          days + ' days ≈ ' + estTotal.toLocaleString() + ' events — server cap is ~6,000, so results will truncate.\n\n' +
+          'Recommended max for this brand: ' + maxDays + ' day' + (maxDays === 1 ? '' : 's') + '.\n\n' +
+          'Pull anyway (will return partial data)?'
+        );
+        if (!ok) return;
+      } else if (estTotal > 3000) {
+        const ok = confirm(
+          'This pull will fetch ~' + estTotal.toLocaleString() + ' events across ~' + Math.ceil(estTotal / 100) + ' pages.\n\n' +
+          'Estimated time: ' + Math.ceil(estTotal / 100 * 0.4) + '–' + Math.ceil(estTotal / 100 * 0.8) + ' seconds.\n\n' +
+          'Continue?'
+        );
+        if (!ok) return;
+      }
+    } else if (days >= 30 && !estPerDay) {
+      const ok = confirm(
+        days + '-day window on an unknown-volume brand.\n\n' +
+        'High-volume brands may truncate at the server cap (~6,000 events / 60 seconds).\n\n' +
+        'Continue? (Try "Today" or 7 days first to size the brand.)'
+      );
+      if (!ok) return;
+    }
+
     btn.disabled = true;
     btn.textContent = 'Pulling…';
     document.getElementById('alertBox').innerHTML =
       '<div class="alert alert-info" style="background:rgba(96,165,250,0.08);border:1px solid rgba(96,165,250,0.3);color:#93c5fd">'
-      + 'Pulling all pages from Amazon — high-volume windows can take 30–90 seconds. Rate limits apply (0.5 req/sec + 30 burst).'
+      + 'Pulling pages from Amazon — rate limited at 0.5 req/sec after the initial burst. May take up to ~60 sec on high-volume windows.'
       + '</div>';
 
     const payload = { credentialID: parseInt(credID, 10) };
@@ -247,6 +311,7 @@
       lastData = data;
       document.getElementById('alertBox').innerHTML = '';
       render(data);
+      updateVolumeHint();
     } catch (e) {
       document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">'+esc(e.message)+'</div>';
       document.getElementById('results').style.display = 'none';
@@ -276,14 +341,34 @@
     document.getElementById('resultsHeading').textContent = data.brand.BrandName + ' — ' + headingWindow;
 
     const pag = data.pagination || {};
+    const credID = document.getElementById('fCredential').value;
+    if (pag.eventsPerDay) cacheVolume(credID, pag.eventsPerDay);
+
     const pagStr = pag.pages
       ? (' · ' + pag.totalEvents.toLocaleString() + ' events across ' + pag.pages + ' page' + (pag.pages === 1 ? '' : 's')
-         + (pag.hitCap ? ' (hit 200-page safety cap — some data truncated)' : ''))
+         + (pag.elapsedMs ? ' in ' + (pag.elapsedMs / 1000).toFixed(1) + 's' : ''))
       : '';
     document.getElementById('resultsMeta').textContent =
       'Currency: ' + (s.currencies.join(', ') || '—')
       + '  ·  Posted after ' + new Date(data.postedAfter).toLocaleString()
       + pagStr;
+
+    // Truncation warning
+    const existingAlert = document.getElementById('alertBox');
+    if (pag.hitCap) {
+      const earliest = pag.actualRange && pag.actualRange.earliestPosted
+        ? new Date(pag.actualRange.earliestPosted).toLocaleString()
+        : 'unknown';
+      const latest = pag.actualRange && pag.actualRange.latestPosted
+        ? new Date(pag.actualRange.latestPosted).toLocaleString()
+        : 'unknown';
+      existingAlert.innerHTML = `
+        <div class="callout callout-warn" style="margin-bottom:14px">
+          ⚠ <strong>Results truncated.</strong> Stopped at ${pag.capReason}. Showing ${pag.totalEvents.toLocaleString()} events from a partial window.
+          <div style="margin-top:6px;font-size:11px">Data actually covered: <strong>${esc(earliest)}</strong> → <strong>${esc(latest)}</strong>.
+          Narrow the window to see the full period.${pag.eventsPerDay ? ' (This brand runs ~' + pag.eventsPerDay.toLocaleString() + ' events/day.)' : ''}</div>
+        </div>`;
+    }
 
     // COG callout
     const coCo = document.getElementById('cogCallout');
