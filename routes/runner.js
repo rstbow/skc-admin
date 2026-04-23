@@ -67,7 +67,11 @@ router.post('/amazon/financial-events', async (req, res) => {
     res.json(result);
   } catch (e) {
     console.error('[runner/amazon/financial-events]', e);
-    res.status(500).json({ error: e.message || 'Runner failed', runID: null });
+    res.status(500).json({
+      error: e.message || 'Runner failed',
+      sqlDetail: e.sqlDetail || null,
+      runID: null,
+    });
   }
 });
 
