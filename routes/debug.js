@@ -703,4 +703,270 @@ function buildSkuPerDayQty(shipmentEvents, tzOffsetMinutes) {
   return out;
 }
 
+/* =============================================================================
+   Pricing Calculator
+   Hits Amazon Pricing API (current price) + Product Fees API (estimate at
+   hypothetical price) + brand COG from SKU Compass, returns a complete
+   what-if scenario.
+   ============================================================================= */
+router.post('/amazon/pricing-calculator', async (req, res) => {
+  try {
+    const {
+      credentialID,
+      sku,
+      scenarioPrice,               // the "what-if" price (number, required)
+      couponDiscountPct,           // 0-100, optional
+      couponDiscountAmount,        // flat $ off, optional (wins over pct if both given)
+      shipping,                    // shipping charged to buyer, default 0
+      cogOverride,                 // manual COG override, optional
+      isAmazonFulfilled,           // true=FBA, false=FBM, default true
+    } = req.body || {};
+
+    if (!credentialID || !sku || scenarioPrice == null) {
+      return res.status(400).json({ error: 'credentialID, sku, and scenarioPrice are required' });
+    }
+
+    const ctx = await loadCredential(parseInt(credentialID, 10));
+    if (!ctx) return res.status(404).json({ error: 'Credential not found' });
+    if (ctx.connector.Name !== 'AMAZON_SP_API') {
+      return res.status(400).json({ error: 'Only Amazon credentials are supported' });
+    }
+
+    // Marketplace: first in MarketplaceIDs list, or fall back by region
+    const marketplaceIDs = (ctx.cred.MarketplaceIDs || '').split(',').map((s) => s.trim()).filter(Boolean);
+    const marketplaceId  = marketplaceIDs[0]
+      || (ctx.cred.Region === 'EU' ? 'A1F83G8C2ARO7P' : 'ATVPDKIKX0DER');
+
+    // 1. Get current price for the SKU (baseline)
+    let currentPrice = null, currentShipping = 0, asin = null, currency = 'USD';
+    try {
+      const priceResp = await callSpApi(ctx,
+        '/products/pricing/v0/price'
+        + '?MarketplaceId=' + encodeURIComponent(marketplaceId)
+        + '&Skus=' + encodeURIComponent(sku)
+        + '&ItemType=Sku');
+      const priceItem = (priceResp?.payload || [])[0];
+      if (priceItem?.Product?.Offers?.length) {
+        const offer = priceItem.Product.Offers[0];
+        currentPrice    = offer.BuyingPrice?.ListingPrice?.Amount ?? null;
+        currentShipping = offer.BuyingPrice?.Shipping?.Amount ?? 0;
+        currency        = offer.BuyingPrice?.ListingPrice?.CurrencyCode || 'USD';
+      }
+      asin = priceItem?.ASIN || null;
+    } catch (e) {
+      // Non-fatal — continue with scenario only
+      console.warn('[pricing-calculator] getPricing failed', e.message);
+    }
+
+    // 2. Fee estimate at BASELINE price (current actual price)
+    let baselineFees = null;
+    if (currentPrice != null) {
+      baselineFees = await getFeesEstimate(ctx, sku, marketplaceId, currentPrice, currentShipping, currency, isAmazonFulfilled ?? true);
+    }
+
+    // 3. Compute scenario effective price (after coupon)
+    const scenarioShipping = shipping != null ? Number(shipping) : 0;
+    let effectivePrice = Number(scenarioPrice);
+    let couponApplied = 0;
+    if (couponDiscountAmount != null && couponDiscountAmount > 0) {
+      couponApplied = Math.min(Number(couponDiscountAmount), effectivePrice);
+      effectivePrice = effectivePrice - couponApplied;
+    } else if (couponDiscountPct != null && couponDiscountPct > 0) {
+      couponApplied = effectivePrice * (Number(couponDiscountPct) / 100);
+      effectivePrice = effectivePrice - couponApplied;
+    }
+    effectivePrice = Math.max(0.01, round2(effectivePrice));
+
+    // 4. Fee estimate at SCENARIO price
+    const scenarioFees = await getFeesEstimate(
+      ctx, sku, marketplaceId, effectivePrice, scenarioShipping, currency, isAmazonFulfilled ?? true
+    );
+
+    // 5. COG from SKU Compass
+    let cog = null;
+    let cogSource = null;
+    if (cogOverride != null && cogOverride !== '') {
+      cog = Number(cogOverride);
+      cogSource = 'manual';
+    } else {
+      const cogResult = await fetchCogBySku(ctx.brand.BrandUID, [sku]);
+      if (cogResult.cogBySku && cogResult.cogBySku[sku] != null) {
+        cog = cogResult.cogBySku[sku];
+        cogSource = 'sku_compass';
+      } else if (cogResult.unavailableReason) {
+        cogSource = 'unavailable';
+      }
+    }
+
+    const baseline = baselineFees ? buildScenario({
+      label: 'baseline',
+      listingPrice: currentPrice,
+      effectivePrice: currentPrice,
+      shipping: currentShipping,
+      feeResult: baselineFees,
+      cog, couponApplied: 0,
+    }) : null;
+
+    const scenario = buildScenario({
+      label: 'scenario',
+      listingPrice: Number(scenarioPrice),
+      effectivePrice,
+      shipping: scenarioShipping,
+      feeResult: scenarioFees,
+      cog,
+      couponApplied,
+    });
+
+    const delta = baseline ? {
+      priceChange:     round2(scenario.effectivePrice - baseline.effectivePrice),
+      feesChange:      round2(scenario.totalFees     - baseline.totalFees),
+      netProfitChange: round2(scenario.netProfit     - baseline.netProfit),
+      marginChangePP:  scenario.margin != null && baseline.margin != null
+                       ? round2(scenario.margin - baseline.margin) : null,
+    } : null;
+
+    await logAction({
+      userID: req.user.userID,
+      action: 'DEBUG_AMAZON_PRICING_CALCULATOR',
+      entityType: 'BrandCredential',
+      entityID: String(credentialID),
+      details: { sku, scenarioPrice, effectivePrice, couponApplied, cogSource },
+      ...reqMeta(req),
+    });
+
+    res.json({
+      brand:       ctx.brand,
+      sku,
+      asin,
+      marketplaceId,
+      currency,
+      isAmazonFulfilled: isAmazonFulfilled ?? true,
+      cog, cogSource,
+      baseline,
+      scenario,
+      delta,
+    });
+  } catch (e) {
+    console.error('[pricing-calculator]', e);
+    res.status(500).json({ error: e.message, details: e.response || null });
+  }
+});
+
+/**
+ * Call Amazon Product Fees API for a hypothetical price.
+ */
+async function getFeesEstimate(ctx, sku, marketplaceId, listingPrice, shipping, currency, isAmazonFulfilled) {
+  const body = {
+    FeesEstimateRequest: {
+      MarketplaceId: marketplaceId,
+      IsAmazonFulfilled: !!isAmazonFulfilled,
+      PriceToEstimateFees: {
+        ListingPrice: { CurrencyCode: currency || 'USD', Amount: Number(listingPrice) },
+        Shipping:     { CurrencyCode: currency || 'USD', Amount: Number(shipping || 0) },
+      },
+      Identifier: 'skc-calc-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
+    },
+  };
+
+  const path = '/products/fees/v0/listings/' + encodeURIComponent(sku) + '/feesEstimate';
+  const resp = await callSpApi(ctx, path, { method: 'POST', body });
+  const result = resp?.payload?.FeesEstimateResult;
+  if (!result) return { error: 'No result in Amazon response' };
+  if (result.Status !== 'Success') {
+    return { error: 'Amazon returned status: ' + result.Status, raw: result };
+  }
+  return parseFeeDetails(result.FeesEstimate);
+}
+
+/**
+ * Flatten Amazon's nested FeeDetailList into named fee buckets.
+ */
+function parseFeeDetails(feesEstimate) {
+  const totalFees = feesEstimate?.TotalFeesEstimate?.Amount ?? 0;
+  let referral = 0, fba = 0, variableClosing = 0, perItem = 0, other = 0;
+  const breakdown = {};
+
+  function walk(list) {
+    for (const f of list || []) {
+      const amt = f.FinalFee?.Amount ?? f.FeeAmount?.Amount ?? 0;
+      const type = f.FeeType || 'Unknown';
+      breakdown[type] = (breakdown[type] || 0) + amt;
+      if (type === 'ReferralFee')            referral += amt;
+      else if (/^FBA/.test(type))            fba      += amt;
+      else if (type === 'VariableClosingFee') variableClosing += amt;
+      else if (type === 'PerItemFee')        perItem  += amt;
+      else                                    other    += amt;
+      if (f.IncludedFeeDetailList) walk(f.IncludedFeeDetailList);
+    }
+  }
+  // The top-level FeeDetailList only includes "top-level" fees; FBA has a
+  // rollup entry plus IncludedFeeDetailList sub-fees. We DO NOT recurse into
+  // sub-fees for the primary sum (avoids double-counting); we show sub-fees
+  // only in the breakdown for drill-down.
+  const topLevel = feesEstimate?.FeeDetailList || [];
+  for (const f of topLevel) {
+    const amt = f.FinalFee?.Amount ?? f.FeeAmount?.Amount ?? 0;
+    const type = f.FeeType || 'Unknown';
+    breakdown[type] = (breakdown[type] || 0) + amt;
+    if (type === 'ReferralFee')            referral += amt;
+    else if (/^FBA/.test(type))            fba      += amt;
+    else if (type === 'VariableClosingFee') variableClosing += amt;
+    else if (type === 'PerItemFee')        perItem  += amt;
+    else                                    other    += amt;
+    // Included fees captured in breakdown only (for display), not re-summed
+    if (f.IncludedFeeDetailList) {
+      for (const sub of f.IncludedFeeDetailList) {
+        const subAmt = sub.FinalFee?.Amount ?? sub.FeeAmount?.Amount ?? 0;
+        const subType = sub.FeeType || 'Unknown';
+        breakdown['  ↳ ' + subType] = (breakdown['  ↳ ' + subType] || 0) + subAmt;
+      }
+    }
+  }
+
+  return {
+    totalFees: round2(totalFees),
+    referralFee: round2(referral),
+    fbaFee: round2(fba),
+    variableClosingFee: round2(variableClosing),
+    perItemFee: round2(perItem),
+    otherFees: round2(other),
+    breakdown: Object.fromEntries(Object.entries(breakdown).map(([k, v]) => [k, round2(v)])),
+  };
+}
+
+/**
+ * Build a complete scenario object with derived fields.
+ */
+function buildScenario({ label, listingPrice, effectivePrice, shipping, feeResult, cog, couponApplied }) {
+  if (!feeResult || feeResult.error) {
+    return { label, error: feeResult?.error || 'No fee result' };
+  }
+  const revenue       = round2(Number(effectivePrice) + Number(shipping || 0));
+  const totalFees     = feeResult.totalFees;
+  const amazonProceeds = round2(revenue - totalFees);
+  const cogApplied    = cog != null ? round2(Number(cog)) : null;
+  const netProfit     = cogApplied != null ? round2(amazonProceeds - cogApplied) : null;
+  const margin        = (netProfit != null && revenue > 0) ? round2((netProfit / revenue) * 100) : null;
+
+  return {
+    label,
+    listingPrice: round2(Number(listingPrice)),
+    effectivePrice: round2(Number(effectivePrice)),
+    couponApplied: round2(couponApplied),
+    shipping: round2(Number(shipping || 0)),
+    revenue,
+    referralFee: feeResult.referralFee,
+    fbaFee: feeResult.fbaFee,
+    variableClosingFee: feeResult.variableClosingFee,
+    perItemFee: feeResult.perItemFee,
+    otherFees: feeResult.otherFees,
+    totalFees,
+    feeBreakdown: feeResult.breakdown,
+    amazonProceeds,
+    cog: cogApplied,
+    netProfit,
+    margin,
+  };
+}
+
 module.exports = router;

@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKU Compass Admin — Pricing Calculator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/tokens.css">
+<style>
+  .money { font-family: 'Space Mono', monospace; }
+  .panel-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-top: 18px;
+  }
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .panel.scenario {
+    background: linear-gradient(135deg, rgba(249,115,22,0.08), rgba(249,115,22,0.02));
+    border-color: rgba(249,115,22,0.3);
+  }
+  .panel h3 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 14px; }
+  .panel.scenario h3 { color: var(--orange); }
+  .line {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 7px 0;
+    font-size: 13px;
+    border-bottom: 1px solid var(--border);
+  }
+  .line:last-child { border-bottom: none; }
+  .line.subtotal { font-weight: 600; padding: 10px 0; }
+  .line.total {
+    padding: 12px 0;
+    font-size: 15px;
+    font-weight: 700;
+    border-top: 2px solid var(--border-strong);
+    margin-top: 6px;
+  }
+  .line .label { color: var(--text-muted); }
+  .line.total .label { color: var(--text); }
+  .line .amt { font-family: 'Space Mono', monospace; }
+  .amt.neg { color: var(--red); }
+  .amt.pos { color: var(--green); }
+  .amt.muted { color: var(--text-muted); }
+  .indent { padding-left: 18px; font-size: 11px; color: var(--text-dim); }
+  .sub-fee { font-size: 11px; color: var(--text-dim); padding-left: 18px; padding-top: 2px; padding-bottom: 2px; }
+  .sub-fee .amt { color: var(--text-dim); }
+
+  .delta-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-top: 18px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 14px;
+  }
+  .delta-card .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.8px; }
+  .delta-card .val { font-family: 'Space Mono', monospace; font-size: 18px; font-weight: 700; }
+  .delta-card .val.pos { color: var(--green); }
+  .delta-card .val.neg { color: var(--red); }
+
+  .help-inline {
+    font-size: 11px; color: var(--text-dim);
+    margin-top: 3px;
+  }
+  .source-pill {
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: var(--surface3);
+    color: var(--text-muted);
+    margin-left: 6px;
+  }
+  .source-pill.skc { background: rgba(34,197,94,0.15); color: var(--green); }
+  .source-pill.manual { background: rgba(251,191,36,0.15); color: var(--yellow); }
+  .source-pill.unavail { background: rgba(239,68,68,0.15); color: var(--red); }
+</style>
+</head>
+<body data-page="pricing-calculator">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Pricing Calculator</div>
+        <div class="topbar-sub">What-if scenario — change price, apply a coupon, see live fee + profit impact</div>
+      </div>
+    </div>
+    <div class="page-content">
+      <div id="alertBox"></div>
+
+      <div class="card" style="margin-bottom:16px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 120px;gap:14px;align-items:end">
+          <div>
+            <label style="margin-top:0">Credential</label>
+            <select id="fCredential"><option value="">Loading…</option></select>
+          </div>
+          <div>
+            <label style="margin-top:0">SKU</label>
+            <input type="text" id="fSku" placeholder="e.g. WIDGET-BLUE-L">
+          </div>
+          <div>
+            <label style="margin-top:0">New price</label>
+            <input type="number" step="0.01" id="fPrice" placeholder="24.99">
+          </div>
+          <div>
+            <button class="btn" id="runBtn" onclick="runCalc()">Calculate</button>
+          </div>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:14px;margin-top:14px">
+          <div>
+            <label style="margin-top:0">Coupon %</label>
+            <input type="number" step="1" min="0" max="100" id="fCouponPct" placeholder="0">
+          </div>
+          <div>
+            <label style="margin-top:0">Coupon $ (wins if both set)</label>
+            <input type="number" step="0.01" id="fCouponAmt" placeholder="0">
+          </div>
+          <div>
+            <label style="margin-top:0">Shipping to buyer</label>
+            <input type="number" step="0.01" id="fShipping" placeholder="0.00">
+            <div class="help-inline">FBA usually $0 (Amazon bundles shipping)</div>
+          </div>
+          <div>
+            <label style="margin-top:0">COG override (optional)</label>
+            <input type="number" step="0.01" id="fCogOverride" placeholder="leave blank to pull">
+            <div class="help-inline">Blank = pull from SKU Compass</div>
+          </div>
+        </div>
+
+        <div style="margin-top:14px">
+          <label style="margin-top:0">
+            <input type="checkbox" id="fIsAmazonFulfilled" checked>
+            Amazon-fulfilled (FBA)
+          </label>
+          <div class="help-inline">Uncheck for FBM / merchant-fulfilled SKUs — affects shipping fee math</div>
+        </div>
+      </div>
+
+      <div id="results" style="display:none">
+        <h2 id="resultsHeading">—</h2>
+        <div class="subtitle" id="resultsMeta"></div>
+
+        <div class="panel-grid" id="panels"></div>
+        <div id="deltaWrap"></div>
+
+        <details class="card" style="margin-top:18px">
+          <summary style="cursor:pointer;font-weight:600">Full fee breakdown (raw)</summary>
+          <pre class="mono" id="rawFees" style="margin-top:10px;font-size:12px;color:var(--text-muted);white-space:pre-wrap;max-height:400px;overflow:auto"></pre>
+        </details>
+      </div>
+    </div>
+  </main>
+
+<script src="/sidebar.js"></script>
+<script>
+  let creds = [];
+  let fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' });
+
+  document.addEventListener('sidebarReady', async () => {
+    try {
+      const { api } = window._SKCAdmin;
+      const { credentials } = await api('GET', '/api/debug/amazon-credentials');
+      creds = credentials;
+      const sel = document.getElementById('fCredential');
+      if (!creds.length) {
+        sel.innerHTML = '<option value="">No Amazon credentials yet.</option>';
+        document.getElementById('runBtn').disabled = true;
+        return;
+      }
+      sel.innerHTML = creds.map(c => `
+        <option value="${c.CredentialID}">
+          ${esc(c.BrandName)} — ${esc(c.Region || 'NA')} ${c.AccountIdentifier ? '(' + esc(c.AccountIdentifier) + ')' : ''}
+        </option>
+      `).join('');
+    } catch (e) {
+      document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>';
+    }
+  });
+
+  async function runCalc() {
+    const btn = document.getElementById('runBtn');
+    const credID = document.getElementById('fCredential').value;
+    const sku    = document.getElementById('fSku').value.trim();
+    const price  = document.getElementById('fPrice').value;
+    if (!credID || !sku || !price) {
+      alert('Credential, SKU, and New price are required.');
+      return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = 'Calculating…';
+    document.getElementById('alertBox').innerHTML = '';
+
+    try {
+      const { api } = window._SKCAdmin;
+      const payload = {
+        credentialID: parseInt(credID, 10),
+        sku,
+        scenarioPrice: parseFloat(price),
+        isAmazonFulfilled: document.getElementById('fIsAmazonFulfilled').checked,
+      };
+      const pct = document.getElementById('fCouponPct').value;
+      const amt = document.getElementById('fCouponAmt').value;
+      const ship = document.getElementById('fShipping').value;
+      const cog = document.getElementById('fCogOverride').value;
+      if (pct)  payload.couponDiscountPct    = parseFloat(pct);
+      if (amt)  payload.couponDiscountAmount = parseFloat(amt);
+      if (ship) payload.shipping             = parseFloat(ship);
+      if (cog)  payload.cogOverride          = parseFloat(cog);
+
+      const data = await api('POST', '/api/debug/amazon/pricing-calculator', payload);
+      render(data);
+    } catch (e) {
+      document.getElementById('alertBox').innerHTML = '<div class="alert alert-error">' + esc(e.message) + '</div>';
+      document.getElementById('results').style.display = 'none';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Calculate';
+    }
+  }
+
+  function render(data) {
+    if (data.currency) fmt = new Intl.NumberFormat('en-US', { style: 'currency', currency: data.currency });
+
+    document.getElementById('results').style.display = '';
+    document.getElementById('resultsHeading').textContent =
+      data.brand.BrandName + ' — ' + data.sku + (data.asin ? ' (' + data.asin + ')' : '');
+    document.getElementById('resultsMeta').textContent =
+      'Marketplace: ' + data.marketplaceId + '  ·  Currency: ' + data.currency + '  ·  ' +
+      (data.isAmazonFulfilled ? 'FBA' : 'FBM');
+
+    const cogPill = data.cogSource === 'sku_compass' ? '<span class="source-pill skc">from SKU Compass</span>'
+                  : data.cogSource === 'manual'      ? '<span class="source-pill manual">manual</span>'
+                  : data.cogSource === 'unavailable' ? '<span class="source-pill unavail">no COG</span>'
+                  : '';
+
+    const panels = document.getElementById('panels');
+    panels.innerHTML = '';
+    if (data.baseline && !data.baseline.error) {
+      panels.innerHTML += renderPanel('Baseline (current price)', data.baseline, cogPill, 'baseline');
+    } else {
+      panels.innerHTML += `<div class="panel"><h3>Baseline</h3><div style="color:var(--text-muted);font-size:13px">Could not retrieve current price from Amazon. ${data.baseline?.error ? esc(data.baseline.error) : 'No offer found for this SKU.'}</div></div>`;
+    }
+    if (data.scenario && !data.scenario.error) {
+      panels.innerHTML += renderPanel('What-if scenario', data.scenario, cogPill, 'scenario');
+    } else {
+      panels.innerHTML += `<div class="panel scenario"><h3>Scenario</h3><div style="color:var(--red);font-size:13px">${esc(data.scenario?.error || 'Unknown error')}</div></div>`;
+    }
+
+    // Delta card
+    const dw = document.getElementById('deltaWrap');
+    if (data.delta && data.baseline && !data.baseline.error && data.scenario && !data.scenario.error) {
+      dw.innerHTML = `
+        <div class="delta-card">
+          <div>
+            <div class="label">Δ Price</div>
+            <div class="val ${data.delta.priceChange < 0 ? 'neg' : data.delta.priceChange > 0 ? 'pos' : ''}">${fmtDelta(data.delta.priceChange)}</div>
+          </div>
+          <div>
+            <div class="label">Δ Amazon Fees</div>
+            <div class="val ${data.delta.feesChange < 0 ? 'pos' : data.delta.feesChange > 0 ? 'neg' : ''}">${fmtDelta(data.delta.feesChange)}</div>
+          </div>
+          <div>
+            <div class="label">Δ Net Profit</div>
+            <div class="val ${data.delta.netProfitChange < 0 ? 'neg' : data.delta.netProfitChange > 0 ? 'pos' : ''}">${fmtDelta(data.delta.netProfitChange)}</div>
+          </div>
+          <div>
+            <div class="label">Δ Margin</div>
+            <div class="val ${data.delta.marginChangePP == null ? '' : data.delta.marginChangePP < 0 ? 'neg' : data.delta.marginChangePP > 0 ? 'pos' : ''}">${data.delta.marginChangePP == null ? '—' : (data.delta.marginChangePP > 0 ? '+' : '') + data.delta.marginChangePP + ' pp'}</div>
+          </div>
+        </div>
+      `;
+    } else {
+      dw.innerHTML = '';
+    }
+
+    // Raw breakdown
+    document.getElementById('rawFees').textContent = JSON.stringify({
+      baseline: data.baseline,
+      scenario: data.scenario,
+    }, null, 2);
+  }
+
+  function renderPanel(title, s, cogPill, klass) {
+    const subLines = s.feeBreakdown
+      ? Object.entries(s.feeBreakdown)
+          .filter(([k]) => k.startsWith('  ↳ '))
+          .map(([k, v]) => `<div class="sub-fee"><span>${esc(k.replace(/^  ↳ /, '↳ '))}</span><span class="amt money">-${fmt.format(v)}</span></div>`)
+          .join('')
+      : '';
+
+    const coupon = s.couponApplied && s.couponApplied > 0
+      ? `<div class="line"><span class="label">Coupon applied</span><span class="amt money neg">-${fmt.format(s.couponApplied)}</span></div>`
+      : '';
+
+    return `
+      <div class="panel ${klass}">
+        <h3>${esc(title)}</h3>
+        <div class="line"><span class="label">Listing price</span><span class="amt money">${fmt.format(s.listingPrice)}</span></div>
+        ${coupon}
+        <div class="line"><span class="label">Shipping to buyer</span><span class="amt money">${fmt.format(s.shipping)}</span></div>
+        <div class="line subtotal"><span class="label">Revenue</span><span class="amt money pos">${fmt.format(s.revenue)}</span></div>
+
+        <div class="line"><span class="label">Referral fee</span><span class="amt money neg">-${fmt.format(s.referralFee)}</span></div>
+        <div class="line"><span class="label">FBA fee</span><span class="amt money neg">-${fmt.format(s.fbaFee)}</span></div>
+        ${subLines}
+        ${s.variableClosingFee > 0 ? `<div class="line"><span class="label">Variable closing fee</span><span class="amt money neg">-${fmt.format(s.variableClosingFee)}</span></div>` : ''}
+        ${s.perItemFee > 0 ? `<div class="line"><span class="label">Per-item fee</span><span class="amt money neg">-${fmt.format(s.perItemFee)}</span></div>` : ''}
+        ${s.otherFees > 0 ? `<div class="line"><span class="label">Other fees</span><span class="amt money neg">-${fmt.format(s.otherFees)}</span></div>` : ''}
+        <div class="line subtotal"><span class="label">Total Amazon fees</span><span class="amt money neg">-${fmt.format(s.totalFees)}</span></div>
+
+        <div class="line"><span class="label">Amazon proceeds</span><span class="amt money">${fmt.format(s.amazonProceeds)}</span></div>
+
+        <div class="line"><span class="label">COG ${cogPill}</span><span class="amt money ${s.cog != null ? 'neg' : 'muted'}">${s.cog != null ? '-' + fmt.format(s.cog) : 'unavailable'}</span></div>
+
+        <div class="line total">
+          <span class="label">Net profit</span>
+          <span class="amt money ${s.netProfit == null ? 'muted' : s.netProfit < 0 ? 'neg' : 'pos'}">${s.netProfit == null ? '—' : fmt.format(s.netProfit)}</span>
+        </div>
+        <div class="line"><span class="label">Margin</span><span class="amt money ${s.margin == null ? 'muted' : s.margin < 0 ? 'neg' : ''}">${s.margin == null ? '—' : s.margin + '%'}</span></div>
+      </div>
+    `;
+  }
+
+  function fmtDelta(n) {
+    if (n == null || isNaN(n)) return '—';
+    const sign = n > 0 ? '+' : n < 0 ? '' : '';
+    return sign + fmt.format(n);
+  }
+
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+</script>
+</body>
+</html>
