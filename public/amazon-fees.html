@@ -687,6 +687,43 @@
     `;
   }
 
+  async function runPersist() {
+    const btn = document.getElementById('persistBtn');
+    const status = document.getElementById('persistStatus');
+    const credID = document.getElementById('fCredential').value;
+    const windowVal = document.getElementById('fDays').value;
+    if (!credID) return;
+
+    const w = resolveWindow(windowVal);
+    btn.disabled = true;
+    btn.textContent = 'Writing to DB…';
+    status.innerHTML = '<span style="color:var(--text-muted)">Pulling + MERGEing into raw.amz_financial_events…</span>';
+
+    const payload = { credentialID: parseInt(credID, 10), triggeredBy: 'MANUAL' };
+    if (w.postedAfter)  payload.postedAfter  = w.postedAfter;
+    if (w.postedBefore) payload.postedBefore = w.postedBefore;
+    if (w.daysBack)     payload.daysBack     = w.daysBack;
+
+    try {
+      const { api } = window._SKCAdmin;
+      const r = await api('POST', '/api/runner/amazon/financial-events', payload);
+      const truncStr = r.truncated ? ' <span style="color:var(--yellow)">(truncated at ' + esc(r.truncatedReason || 'cap') + ')</span>' : '';
+      status.innerHTML =
+        '<span style="color:var(--green)">✓ Run ' + r.runID + '.</span> '
+        + (r.eventsProcessed || 0).toLocaleString() + ' events · '
+        + '<strong style="color:var(--green)">' + (r.rowsInserted || 0).toLocaleString() + '</strong> inserted · '
+        + '<strong>' + (r.rowsUpdated || 0).toLocaleString() + '</strong> updated · '
+        + (r.rowsUnchanged || 0).toLocaleString() + ' unchanged · '
+        + ((r.elapsedMs || 0) / 1000).toFixed(1) + 's'
+        + truncStr;
+    } catch (e) {
+      status.innerHTML = '<span style="color:var(--red)">✗ ' + esc(e.message) + '</span>';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '↓ Persist to DB (Phase 3 runner)';
+    }
+  }
+
   function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
