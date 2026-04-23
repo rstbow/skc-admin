@@ -717,7 +717,23 @@
         + ((r.elapsedMs || 0) / 1000).toFixed(1) + 's'
         + truncStr;
     } catch (e) {
-      status.innerHTML = '<span style="color:var(--red)">✗ ' + esc(e.message) + '</span>';
+      // The api() helper throws away the response body — refetch manually to
+      // get sqlDetail from the 500 response so we can diagnose in the UI.
+      let detailHtml = '';
+      try {
+        const { token } = window._SKCAdmin;
+        const resp = await fetch('/api/runner/amazon/financial-events', {
+          method: 'POST',
+          headers: { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await resp.json().catch(() => ({}));
+        if (body.sqlDetail) {
+          detailHtml = '<pre style="margin-top:8px;padding:10px;background:var(--surface3);border-radius:6px;font-size:11px;color:var(--text-muted);white-space:pre-wrap;max-height:300px;overflow:auto">'
+                     + esc(JSON.stringify(body.sqlDetail, null, 2)) + '</pre>';
+        }
+      } catch (_) { /* best effort */ }
+      status.innerHTML = '<span style="color:var(--red)">✗ ' + esc(e.message) + '</span>' + detailHtml;
     } finally {
       btn.disabled = false;
       btn.textContent = '↓ Persist to DB (Phase 3 runner)';
