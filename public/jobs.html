@@ -417,6 +417,25 @@
           const epCollapsed = isCollapsed(epKey);
           const cronHuman = fmt.cron(ep.cron);
 
+          // Per-endpoint status breakdown — same pill set as the connector
+          // header + summary strip, just narrower scope.
+          const epCounts = { ok:0, fail:0, running:0, paused:0, neverRun:0 };
+          for (const j of ep.jobs) {
+            const s = jobStatus(j);
+            if (s === 'RUNNING') epCounts.running++;
+            else if (s === 'FAILED') epCounts.fail++;
+            else if (s === 'SUCCESS') epCounts.ok++;
+            else if (s === 'PAUSED') epCounts.paused++;
+            else epCounts.neverRun++;
+          }
+          const epPills = [
+            epCounts.running  ? `<span class="stats-pill warn">${epCounts.running} running</span>` : '',
+            epCounts.fail     ? `<span class="stats-pill fail">${epCounts.fail} failing</span>` : '',
+            epCounts.ok       ? `<span class="stats-pill ok">${epCounts.ok} ok</span>` : '',
+            epCounts.paused   ? `<span class="stats-pill">${epCounts.paused} paused</span>` : '',
+            epCounts.neverRun ? `<span class="stats-pill">${epCounts.neverRun} new</span>` : '',
+          ].filter(Boolean).join(' ');
+
           html += `
             <div class="tree-subgroup ${epCollapsed ? 'collapsed' : ''}" data-key="${escapeAttr(epKey)}">
               <div class="tree-subgroup-header" onclick="toggleGroup('${escapeAttr(epKey)}')">
@@ -426,7 +445,8 @@
                 <span>${escape(ep.jobType)}</span>
                 <span style="color:var(--text-dim)">·</span>
                 <span title="${escape(ep.cron || 'manual trigger')}">${escape(cronHuman)}</span>
-                <span style="margin-left:auto;color:var(--text-muted);font-size:11px">${ep.jobs.length} brand${ep.jobs.length===1?'':'s'}</span>
+                <span style="color:var(--text-muted);font-size:11px">· ${ep.jobs.length} brand${ep.jobs.length===1?'':'s'}</span>
+                <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">${epPills}</span>
               </div>
               <div class="tree-subgroup-body">
           `;
