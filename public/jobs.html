@@ -8,94 +8,109 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/tokens.css">
 <style>
-  .scheduler-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#f1f5f9;font-size:13px;color:#64748b}
-  .scheduler-pill.ok{background:#ecfdf5;color:#047857}
-  .scheduler-pill.warn{background:#fef3c7;color:#92400e}
+  /* Dark-theme-aware scheduler + summary + tree. Uses tokens from
+     /css/tokens.css (--surface, --text, etc.) so all pages stay
+     consistent. Status pills keep their semantic color but with
+     slightly dimmer backgrounds to not glare on the dark surface. */
+
+  .scheduler-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:var(--surface2);font-size:13px;color:var(--text-muted);border:1px solid var(--border)}
+  .scheduler-pill.ok{background:rgba(34,197,94,.12);color:var(--green);border-color:rgba(34,197,94,.25)}
+  .scheduler-pill.warn{background:rgba(251,191,36,.12);color:var(--yellow);border-color:rgba(251,191,36,.25)}
 
   /* Summary strip — one chip per connector */
   .summary-strip{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
-  .summary-chip{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;font-size:13px;display:flex;align-items:center;gap:10px}
-  .summary-chip.has-fail{border-color:#fecaca;background:#fef2f2}
-  .summary-chip .name{font-weight:600;color:#0f172a}
-  .summary-chip .count{color:#64748b;font-size:12px}
+  .summary-chip{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;font-size:13px;display:flex;align-items:center;gap:10px;color:var(--text)}
+  .summary-chip.has-fail{border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.05)}
+  .summary-chip .name{font-weight:600;color:var(--text)}
+  .summary-chip .count{color:var(--text-muted);font-size:12px}
 
-  .stats-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:999px;background:#e2e8f0;color:#475569;font-weight:600}
-  .stats-pill.ok{background:#d1fae5;color:#065f46}
-  .stats-pill.warn{background:#fef3c7;color:#92400e}
-  .stats-pill.fail{background:#fee2e2;color:#991b1b}
+  .stats-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:999px;background:var(--surface3);color:var(--text-muted);font-weight:600;border:1px solid var(--border)}
+  .stats-pill.ok{background:rgba(34,197,94,.12);color:var(--green);border-color:rgba(34,197,94,.25)}
+  .stats-pill.warn{background:rgba(251,191,36,.12);color:var(--yellow);border-color:rgba(251,191,36,.25)}
+  .stats-pill.fail{background:rgba(239,68,68,.12);color:var(--red);border-color:rgba(239,68,68,.3)}
 
   /* Toolbar */
   .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
-  .toolbar input[type="search"]{padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;min-width:260px;font-size:13px;font-family:inherit}
-  .toolbar select{padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;background:#fff}
-  .toolbar label{display:flex;align-items:center;gap:6px;font-size:13px;color:#475569;margin:0;cursor:pointer}
+  .toolbar input[type="search"]{padding:8px 12px;border:1px solid var(--border-strong);border-radius:6px;min-width:260px;font-size:13px;font-family:inherit;background:var(--surface);color:var(--text)}
+  .toolbar input[type="search"]::placeholder{color:var(--text-dim)}
+  .toolbar input[type="search"]:focus{outline:none;border-color:var(--orange);box-shadow:0 0 0 3px rgba(249,115,22,.15)}
+  .toolbar select{padding:7px 10px;border:1px solid var(--border-strong);border-radius:6px;font-size:13px;background:var(--surface);color:var(--text)}
+  .toolbar select:focus{outline:none;border-color:var(--orange)}
+  .toolbar label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);margin:0;cursor:pointer}
   .toolbar .btn-small{padding:6px 10px;font-size:12px}
 
   /* Tree */
-  .tree-group{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px;overflow:hidden;background:#fff}
-  .tree-group-header{padding:12px 16px;background:#f8fafc;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;border-bottom:1px solid #e2e8f0;font-size:14px}
-  .tree-group-header:hover{background:#f1f5f9}
+  .tree-group{border:1px solid var(--border);border-radius:8px;margin-bottom:10px;overflow:hidden;background:var(--surface)}
+  .tree-group-header{padding:12px 16px;background:var(--surface2);color:var(--text);cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;border-bottom:1px solid var(--border);font-size:14px}
+  .tree-group-header:hover{background:var(--surface3)}
   .tree-group.collapsed .tree-group-header{border-bottom:none}
   .tree-group.collapsed .tree-group-body{display:none}
-  .caret{display:inline-block;width:14px;text-align:center;color:#64748b;transition:transform .15s;font-size:11px}
+  .caret{display:inline-block;width:14px;text-align:center;color:var(--text-muted);transition:transform .15s;font-size:11px}
   .tree-group.collapsed>.tree-group-header .caret,
   .tree-subgroup.collapsed>.tree-subgroup-header .caret{transform:rotate(-90deg)}
 
-  .tree-subgroup{border-top:1px solid #f1f5f9}
+  .tree-subgroup{border-top:1px solid var(--border)}
   .tree-subgroup:first-child{border-top:none}
-  .tree-subgroup-header{padding:9px 16px 9px 34px;background:#fafbfc;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;user-select:none}
-  .tree-subgroup-header:hover{background:#f1f5f9}
+  .tree-subgroup-header{padding:9px 16px 9px 34px;background:var(--surface);color:var(--text-muted);cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;user-select:none}
+  .tree-subgroup-header strong{color:var(--text)}
+  .tree-subgroup-header:hover{background:var(--surface2)}
   .tree-subgroup.collapsed .tree-subgroup-body{display:none}
 
-  .job-row{display:grid;grid-template-columns:12px minmax(180px,1.3fr) minmax(200px,2fr) 120px 56px;gap:14px;padding:10px 16px 10px 52px;border-top:1px solid #f8fafc;cursor:pointer;align-items:center;font-size:13px}
-  .job-row:hover{background:#f8fafc}
+  .job-row{display:grid;grid-template-columns:12px minmax(180px,1.3fr) minmax(200px,2fr) 120px 56px;gap:14px;padding:10px 16px 10px 52px;border-top:1px solid var(--border);cursor:pointer;align-items:center;font-size:13px;color:var(--text)}
+  .job-row:hover{background:var(--surface2)}
   .job-row .status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
-  .status-dot.success{background:#10b981}
-  .status-dot.failed{background:#ef4444}
-  .status-dot.running{background:#3b82f6;animation:pulse 1.4s infinite}
-  .status-dot.paused{background:#94a3b8}
-  .status-dot.new{background:#cbd5e1}
-  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+  .status-dot.success{background:var(--green);box-shadow:0 0 6px rgba(34,197,94,.5)}
+  .status-dot.failed{background:var(--red);box-shadow:0 0 6px rgba(239,68,68,.5)}
+  .status-dot.running{background:var(--blue);animation:pulse 1.4s infinite}
+  .status-dot.paused{background:var(--text-dim)}
+  .status-dot.new{background:var(--border-strong)}
+  @keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 6px rgba(96,165,250,.8)}50%{opacity:.5;box-shadow:0 0 2px rgba(96,165,250,.3)}}
 
-  .job-row .brand{font-weight:500;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .job-row .meta{color:#64748b;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .job-row .meta .err{color:#b91c1c;font-family:'Space Mono',monospace;font-size:11px}
-  .job-row .mode{font-family:'Space Mono',monospace;font-size:10px;color:#94a3b8;text-align:left}
+  .job-row .brand{font-weight:500;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .job-row .meta{color:var(--text-muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .job-row .meta .err{color:var(--red);font-family:'Space Mono',monospace;font-size:11px}
+  .job-row .mode{font-family:'Space Mono',monospace;font-size:10px;color:var(--text-dim);text-align:left}
   .job-row-actions{display:flex;gap:4px;justify-content:flex-end}
-  .btn-icon{padding:4px 8px;font-size:13px;border:1px solid #e2e8f0;background:#fff;border-radius:5px;cursor:pointer;color:#475569;line-height:1}
-  .btn-icon:hover{background:#f1f5f9;border-color:#cbd5e1}
-  .consec{color:#dc2626;font-size:11px;font-weight:600;margin-left:4px}
+  .btn-icon{padding:4px 8px;font-size:13px;border:1px solid var(--border-strong);background:var(--surface2);border-radius:5px;cursor:pointer;color:var(--text-muted);line-height:1}
+  .btn-icon:hover{background:var(--surface3);border-color:var(--orange);color:var(--orange)}
+  .consec{color:var(--red);font-size:11px;font-weight:600;margin-left:4px}
 
-  /* Badges */
-  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.02em}
-  .badge-success{background:#d1fae5;color:#065f46}
-  .badge-failed{background:#fee2e2;color:#991b1b}
-  .badge-running{background:#dbeafe;color:#1e40af}
-  .badge-paused{background:#e2e8f0;color:#475569}
-  .badge-canceled{background:#f3e8ff;color:#6b21a8}
+  /* Badges (dark-theme) */
+  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.02em;border:1px solid transparent}
+  .badge-success{background:rgba(34,197,94,.12);color:var(--green);border-color:rgba(34,197,94,.3)}
+  .badge-failed{background:rgba(239,68,68,.12);color:var(--red);border-color:rgba(239,68,68,.3)}
+  .badge-running{background:rgba(96,165,250,.14);color:var(--blue);border-color:rgba(96,165,250,.35)}
+  .badge-paused{background:var(--surface3);color:var(--text-muted);border-color:var(--border)}
+  .badge-canceled{background:rgba(139,92,246,.12);color:var(--purple);border-color:rgba(139,92,246,.3)}
 
   /* Drawer */
-  .drawer-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;z-index:40}
+  .drawer-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;z-index:40}
   .drawer-backdrop.open{display:block}
-  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100vw);background:#fff;border-left:1px solid #e2e8f0;transform:translateX(100%);transition:transform .25s;z-index:50;overflow-y:auto;display:flex;flex-direction:column}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100vw);background:var(--surface);border-left:1px solid var(--border);transform:translateX(100%);transition:transform .25s;z-index:50;overflow-y:auto;display:flex;flex-direction:column;color:var(--text)}
   .drawer.open{transform:translateX(0)}
-  .drawer-head{padding:20px 24px 12px 24px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
-  .drawer-head h2{margin:0;font-size:18px}
+  .drawer-head{padding:20px 24px 12px 24px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .drawer-head h2{margin:0;font-size:18px;color:var(--text)}
   .drawer-body{padding:20px 24px;flex:1}
-  .drawer-close{background:none;border:none;font-size:22px;color:#64748b;cursor:pointer;line-height:1}
-  .runbook{background:#f1f5f9;border-left:4px solid #2563eb;padding:12px 16px;border-radius:6px;margin:12px 0}
-  .runbook.sev-ERROR{border-left-color:#dc2626;background:#fef2f2}
-  .runbook.sev-WARN{border-left-color:#f59e0b;background:#fffbeb}
-  .runbook.sev-CRITICAL{border-left-color:#991b1b;background:#fef2f2}
-  .runbook h4{margin:0 0 6px 0;font-size:13px;font-weight:700}
-  .runbook .label{font-size:11px;font-weight:600;color:#475569;margin-top:10px;text-transform:uppercase;letter-spacing:.05em}
-  .runbook p{margin:2px 0;font-size:13px;white-space:pre-wrap;line-height:1.5}
-  .error-box{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 14px;border-radius:6px;font-family:'Space Mono',monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto}
-  .run-row{display:grid;grid-template-columns:80px 1fr 100px 70px 60px;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:12px;align-items:center}
+  .drawer-close{background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;line-height:1}
+  .drawer-close:hover{color:var(--text)}
+  .drawer-body strong{color:var(--text)}
+
+  .runbook{background:var(--surface2);border:1px solid var(--border);border-left:4px solid var(--blue);padding:12px 16px;border-radius:6px;margin:12px 0;color:var(--text)}
+  .runbook.sev-ERROR{border-left-color:var(--red);background:rgba(239,68,68,.06)}
+  .runbook.sev-WARN{border-left-color:var(--yellow);background:rgba(251,191,36,.06)}
+  .runbook.sev-CRITICAL{border-left-color:var(--red);background:rgba(239,68,68,.1)}
+  .runbook h4{margin:0 0 6px 0;font-size:13px;font-weight:700;color:var(--text)}
+  .runbook .label{font-size:11px;font-weight:600;color:var(--text-muted);margin-top:10px;text-transform:uppercase;letter-spacing:.05em}
+  .runbook p{margin:2px 0;font-size:13px;white-space:pre-wrap;line-height:1.5;color:var(--text)}
+
+  .error-box{background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.3);color:#fca5a5;padding:10px 14px;border-radius:6px;font-family:'Space Mono',monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto}
+
+  .run-row{display:grid;grid-template-columns:80px 1fr 100px 70px 60px;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px;align-items:center;color:var(--text)}
   .run-row:last-child{border-bottom:none}
 
-  .inflight-row{display:grid;grid-template-columns:2fr 1fr 1fr 80px 80px;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;align-items:center}
-  .empty{text-align:center;padding:30px 20px;color:#64748b;font-size:13px}
+  .inflight-row{display:grid;grid-template-columns:2fr 1fr 1fr 80px 80px;gap:12px;padding:10px 12px;border-bottom:1px solid var(--border);font-size:13px;align-items:center;color:var(--text)}
+  .inflight-row strong{color:var(--text)}
+  .empty{text-align:center;padding:30px 20px;color:var(--text-muted);font-size:13px}
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .btn-small{padding:6px 10px;font-size:12px}
 </style>
@@ -122,7 +137,7 @@
       <div class="card" style="margin-bottom:18px">
         <h3 style="margin:0 0 12px 0;font-size:14px">
           Running now
-          <span id="inflightCount" style="color:#64748b;font-weight:400">(0)</span>
+          <span id="inflightCount" style="color:var(--text-muted);font-weight:400">(0)</span>
         </h3>
         <div id="inflightList"><div class="empty" style="padding:14px">No jobs currently running</div></div>
       </div>
@@ -143,7 +158,7 @@
           <span style="flex:1"></span>
           <button class="btn btn-secondary btn-small" onclick="expandAll(true)">Expand all</button>
           <button class="btn btn-secondary btn-small" onclick="expandAll(false)">Collapse all</button>
-          <span id="jobCount" style="color:#64748b;font-size:12px;margin-left:8px"></span>
+          <span id="jobCount" style="color:var(--text-muted);font-size:12px;margin-left:8px"></span>
         </div>
         <div id="treeContainer"></div>
       </div>
@@ -156,7 +171,7 @@
     <div class="drawer-head">
       <div>
         <h2 id="drawerTitle">—</h2>
-        <div id="drawerSub" style="font-size:12px;color:#64748b;margin-top:4px"></div>
+        <div id="drawerSub" style="font-size:12px;color:var(--text-muted);margin-top:4px"></div>
       </div>
       <button class="drawer-close" onclick="closeDrawer()">×</button>
     </div>
@@ -219,7 +234,7 @@
 
     function alertError(msg){
       document.getElementById('alertBox').innerHTML =
-        '<div class="alert alert-error" style="background:#fef2f2;color:#991b1b;padding:10px 14px;border-radius:6px;margin-bottom:12px">' + msg + '</div>';
+        '<div class="alert alert-error" style="background:rgba(239,68,68,.1);color:#fca5a5;border:1px solid rgba(239,68,68,.3);padding:10px 14px;border-radius:6px;margin-bottom:12px">' + msg + '</div>';
       setTimeout(()=>{ document.getElementById('alertBox').innerHTML=''; }, 6000);
     }
 
@@ -381,7 +396,7 @@
             <div class="tree-group-header" onclick="toggleGroup('${escapeAttr(connKey)}')">
               <span class="caret">▼</span>
               <span style="font-weight:600">${escape(conn.display)}</span>
-              <span style="color:#64748b;font-size:12px">· ${allJobs.length} jobs</span>
+              <span style="color:var(--text-muted);font-size:12px">· ${allJobs.length} jobs</span>
               <span style="margin-left:auto">${groupPill}</span>
             </div>
             <div class="tree-group-body">
@@ -396,12 +411,12 @@
             <div class="tree-subgroup ${epCollapsed ? 'collapsed' : ''}" data-key="${escapeAttr(epKey)}">
               <div class="tree-subgroup-header" onclick="toggleGroup('${escapeAttr(epKey)}')">
                 <span class="caret">▼</span>
-                <strong style="color:#0f172a">${escape(ep.endpointName)}</strong>
-                <span style="color:#94a3b8">·</span>
+                <strong style="color:var(--text)">${escape(ep.endpointName)}</strong>
+                <span style="color:var(--text-dim)">·</span>
                 <span>${escape(ep.jobType)}</span>
-                <span style="color:#94a3b8">·</span>
+                <span style="color:var(--text-dim)">·</span>
                 <span title="${escape(ep.cron || 'manual trigger')}">${escape(cronHuman)}</span>
-                <span style="margin-left:auto;color:#64748b;font-size:11px">${ep.jobs.length} brand${ep.jobs.length===1?'':'s'}</span>
+                <span style="margin-left:auto;color:var(--text-muted);font-size:11px">${ep.jobs.length} brand${ep.jobs.length===1?'':'s'}</span>
               </div>
               <div class="tree-subgroup-body">
           `;
@@ -451,9 +466,9 @@
       }
       host.innerHTML = running.map(j => `
         <div class="inflight-row">
-          <div><strong>${escape(j.Name || j.EndpointName)}</strong><div style="color:#64748b;font-size:11px">${escape(j.ConnectorDisplay)}</div></div>
+          <div><strong>${escape(j.Name || j.EndpointName)}</strong><div style="color:var(--text-muted);font-size:11px">${escape(j.ConnectorDisplay)}</div></div>
           <div>${escape(j.BrandName || '—')}</div>
-          <div style="color:#64748b">started ${fmt.rel(j.LastRunAt)}</div>
+          <div style="color:var(--text-muted)">started ${fmt.rel(j.LastRunAt)}</div>
           <div><span class="badge badge-running">RUNNING</span></div>
           <div><button class="btn btn-secondary btn-small" onclick="openDrawer(${j.JobID})">View</button></div>
         </div>
@@ -507,13 +522,13 @@
       ` : '';
 
       const paramsHTML = j.Params ? `
-        <div><strong>Params</strong><div style="color:#64748b;font-family:Space Mono,monospace;font-size:11px">${escape(j.Params)}</div></div>
+        <div><strong>Params</strong><div style="color:var(--text-muted);font-family:Space Mono,monospace;font-size:11px">${escape(j.Params)}</div></div>
       ` : '';
 
       const runsHTML = d.runs && d.runs.length ? `
         <h4 style="margin:18px 0 6px 0;font-size:13px">Recent runs</h4>
         <div style="font-size:12px">
-          <div class="run-row" style="font-weight:600;color:#475569;border-bottom:2px solid #e2e8f0">
+          <div class="run-row" style="font-weight:600;color:var(--text-muted);border-bottom:2px solid var(--border-strong)">
             <div>Status</div><div>Started</div><div>Duration</div><div>Rows</div><div></div>
           </div>
           ${d.runs.map(r => `
@@ -522,12 +537,12 @@
               <div>${fmt.rel(r.StartedAt)}</div>
               <div>${fmt.dur(r.DurationMs)}</div>
               <div>${r.RowsIngested ?? '—'}</div>
-              <div style="color:#64748b;font-size:10px">${escape(r.TriggeredBy)}</div>
+              <div style="color:var(--text-muted);font-size:10px">${escape(r.TriggeredBy)}</div>
             </div>
-            ${r.ErrorMessage ? '<div style="font-size:11px;color:#991b1b;padding:4px 0 8px 90px;font-family:Space Mono,monospace">' + escape(r.ErrorMessage.slice(0,300)) + '</div>' : ''}
+            ${r.ErrorMessage ? '<div style="font-size:11px;color:#fca5a5;padding:4px 0 8px 90px;font-family:Space Mono,monospace">' + escape(r.ErrorMessage.slice(0,300)) + '</div>' : ''}
           `).join('')}
         </div>
-      ` : '<p style="color:#64748b">No runs yet.</p>';
+      ` : '<p style="color:var(--text-muted)">No runs yet.</p>';
 
       document.getElementById('drawerBody').innerHTML = `
         <div class="actions" style="margin-bottom:14px">
@@ -538,12 +553,12 @@
         </div>
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;margin-bottom:10px">
-          <div><strong>Schedule</strong><div style="color:#64748b" title="${escape(j.CronExpression||'')}">${escape(fmt.cron(j.CronExpression))}</div></div>
-          <div><strong>Timezone</strong><div style="color:#64748b">${escape(j.TimezoneIANA||'—')}</div></div>
-          <div><strong>Mode</strong><div style="color:#64748b">${escape(j.ExecutionMode)}</div></div>
-          <div><strong>Job type</strong><div style="color:#64748b">${escape(j.JobType)}</div></div>
-          <div><strong>Last run</strong><div style="color:#64748b">${fmt.rel(j.LastRunAt)}</div></div>
-          <div><strong>Consec. failures</strong><div style="color:${j.ConsecutiveFailures>0?'#dc2626':'#64748b'}">${j.ConsecutiveFailures}</div></div>
+          <div><strong>Schedule</strong><div style="color:var(--text-muted)" title="${escape(j.CronExpression||'')}">${escape(fmt.cron(j.CronExpression))}</div></div>
+          <div><strong>Timezone</strong><div style="color:var(--text-muted)">${escape(j.TimezoneIANA||'—')}</div></div>
+          <div><strong>Mode</strong><div style="color:var(--text-muted)">${escape(j.ExecutionMode)}</div></div>
+          <div><strong>Job type</strong><div style="color:var(--text-muted)">${escape(j.JobType)}</div></div>
+          <div><strong>Last run</strong><div style="color:var(--text-muted)">${fmt.rel(j.LastRunAt)}</div></div>
+          <div><strong>Consec. failures</strong><div style="color:${j.ConsecutiveFailures>0?'var(--red)':'var(--text-muted)'}">${j.ConsecutiveFailures}</div></div>
           ${paramsHTML}
         </div>
 
@@ -556,14 +571,14 @@
     async function runNow(jobID){
       try {
         document.getElementById('alertBox').innerHTML =
-          '<div class="alert" style="background:#dbeafe;color:#1e40af;padding:8px 14px;border-radius:6px;margin-bottom:12px">Firing job ' + jobID + '…</div>';
+          '<div class="alert" style="background:rgba(96,165,250,.14);color:var(--blue);border:1px solid rgba(96,165,250,.35);padding:8px 14px;border-radius:6px;margin-bottom:12px">Firing job ' + jobID + '…</div>';
         const d = await window._SKCAdmin.api('POST', '/api/jobs/' + jobID + '/run');
         if (d.ok) {
           document.getElementById('alertBox').innerHTML =
-            '<div class="alert" style="background:#d1fae5;color:#065f46;padding:8px 14px;border-radius:6px;margin-bottom:12px">✓ Run ' + d.runID + ' succeeded</div>';
+            '<div class="alert" style="background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.3);padding:8px 14px;border-radius:6px;margin-bottom:12px">✓ Run ' + d.runID + ' succeeded</div>';
         } else {
           document.getElementById('alertBox').innerHTML =
-            '<div class="alert" style="background:#fef2f2;color:#991b1b;padding:8px 14px;border-radius:6px;margin-bottom:12px">✗ Run ' + d.runID + ' failed: ' + escape(d.error||'') + '</div>';
+            '<div class="alert" style="background:rgba(239,68,68,.1);color:#fca5a5;border:1px solid rgba(239,68,68,.3);padding:8px 14px;border-radius:6px;margin-bottom:12px">✗ Run ' + d.runID + ' failed: ' + escape(d.error||'') + '</div>';
         }
         await loadJobs();
         if (currentJobID) openDrawer(currentJobID);
