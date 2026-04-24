@@ -40,7 +40,17 @@ router.get('/', async (_req, res) => {
                ORDER BY jr2.StartedAt DESC) AS LastSuccessDurationMs,
              (SELECT COUNT(*) FROM admin.JobRuns jr3
                WHERE jr3.JobID = j.JobID AND jr3.Status = 'RUNNING'
-                 AND jr3.StartedAt > DATEADD(HOUR, -1, SYSUTCDATETIME())) AS InFlight
+                 AND jr3.StartedAt > DATEADD(HOUR, -1, SYSUTCDATETIME())) AS InFlight,
+             -- surface in-flight chunk progress for the UI
+             (SELECT TOP 1 jr4.ChunksTotal     FROM admin.JobRuns jr4
+               WHERE jr4.JobID = j.JobID AND jr4.Status = 'RUNNING'
+               ORDER BY jr4.StartedAt DESC) AS InFlightChunksTotal,
+             (SELECT TOP 1 jr4.ChunksCompleted FROM admin.JobRuns jr4
+               WHERE jr4.JobID = j.JobID AND jr4.Status = 'RUNNING'
+               ORDER BY jr4.StartedAt DESC) AS InFlightChunksCompleted,
+             (SELECT TOP 1 jr4.RowsIngested    FROM admin.JobRuns jr4
+               WHERE jr4.JobID = j.JobID AND jr4.Status = 'RUNNING'
+               ORDER BY jr4.StartedAt DESC) AS InFlightRowsSoFar
       FROM admin.Jobs j
       JOIN admin.Endpoints  e ON e.EndpointID  = j.EndpointID
       JOIN admin.Connectors c ON c.ConnectorID = e.ConnectorID
@@ -80,7 +90,8 @@ router.get('/:jobID(\\d+)', async (req, res) => {
       .input('jid', sql.Int, jobID)
       .query(`
         SELECT TOP 20 RunID, StartedAt, EndedAt, DurationMs, Status,
-               RowsIngested, TriggeredBy, WorkerHost, ErrorMessage, ErrorFingerprint
+               RowsIngested, ChunksTotal, ChunksCompleted,
+               TriggeredBy, WorkerHost, ErrorMessage, ErrorFingerprint
         FROM admin.JobRuns
         WHERE JobID = @jid
         ORDER BY StartedAt DESC

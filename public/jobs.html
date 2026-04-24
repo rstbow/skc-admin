@@ -378,15 +378,25 @@
       let html = '';
       for (const [connName, conn] of byConn) {
         const allJobs = Array.from(conn.endpoints.values()).flatMap(e => e.jobs);
-        const fails = allJobs.filter(j => jobStatus(j) === 'FAILED').length;
-        const running = allJobs.filter(j => jobStatus(j) === 'RUNNING').length;
-        const okCount = allJobs.filter(j => jobStatus(j) === 'SUCCESS').length;
+        const counts = { ok:0, fail:0, running:0, paused:0, neverRun:0 };
+        for (const j of allJobs) {
+          const s = jobStatus(j);
+          if (s === 'RUNNING') counts.running++;
+          else if (s === 'FAILED') counts.fail++;
+          else if (s === 'SUCCESS') counts.ok++;
+          else if (s === 'PAUSED') counts.paused++;
+          else counts.neverRun++;
+        }
 
-        const groupPill =
-          fails > 0   ? `<span class="stats-pill fail">${fails} failing</span>` :
-          running > 0 ? `<span class="stats-pill warn">${running} running</span>` :
-          okCount > 0 ? `<span class="stats-pill ok">${okCount} OK</span>` :
-                        `<span class="stats-pill">${allJobs.length} new</span>`;
+        // Same breakdown as the top summary chips so the header tells the
+        // same story without needing to expand.
+        const groupPills = [
+          counts.running  ? `<span class="stats-pill warn">${counts.running} running</span>` : '',
+          counts.fail     ? `<span class="stats-pill fail">${counts.fail} failing</span>` : '',
+          counts.ok       ? `<span class="stats-pill ok">${counts.ok} ok</span>` : '',
+          counts.paused   ? `<span class="stats-pill">${counts.paused} paused</span>` : '',
+          counts.neverRun ? `<span class="stats-pill">${counts.neverRun} new</span>` : '',
+        ].filter(Boolean).join(' ');
 
         const connKey = 'conn:' + connName;
         const connCollapsed = isCollapsed(connKey);
@@ -397,7 +407,7 @@
               <span class="caret">▼</span>
               <span style="font-weight:600">${escape(conn.display)}</span>
               <span style="color:var(--text-muted);font-size:12px">· ${allJobs.length} jobs</span>
-              <span style="margin-left:auto">${groupPill}</span>
+              <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">${groupPills}</span>
             </div>
             <div class="tree-group-body">
         `;
@@ -425,8 +435,12 @@
             const status = jobStatus(j);
             const statusClass = status.toLowerCase();
             const lastRunTxt = j.LastRunAt ? fmt.rel(j.LastRunAt) : 'never';
+            const chunkProgress = (j.InFlightChunksTotal && j.InFlightChunksTotal > 0)
+              ? 'chunk ' + (j.InFlightChunksCompleted || 0) + '/' + j.InFlightChunksTotal +
+                (j.InFlightRowsSoFar ? ' · ' + j.InFlightRowsSoFar.toLocaleString() + ' rows' : '')
+              : null;
             const metaTxt =
-              status === 'RUNNING' ? 'running…' :
+              status === 'RUNNING' ? (chunkProgress || 'running…') :
               status === 'FAILED'  ? ('<span class="err">✗ ' + escape((j.LastErrorMessage||'error').slice(0,80)) + '</span>') :
               status === 'SUCCESS' ? ('✓ ' + lastRunTxt + (j.LastSuccessDurationMs ? ' · ' + fmt.dur(j.LastSuccessDurationMs) : '')) :
               status === 'PAUSED'  ? 'paused' :
@@ -464,15 +478,21 @@
         host.innerHTML = '<div class="empty" style="padding:14px">No jobs currently running</div>';
         return;
       }
-      host.innerHTML = running.map(j => `
-        <div class="inflight-row">
-          <div><strong>${escape(j.Name || j.EndpointName)}</strong><div style="color:var(--text-muted);font-size:11px">${escape(j.ConnectorDisplay)}</div></div>
-          <div>${escape(j.BrandName || '—')}</div>
-          <div style="color:var(--text-muted)">started ${fmt.rel(j.LastRunAt)}</div>
-          <div><span class="badge badge-running">RUNNING</span></div>
-          <div><button class="btn btn-secondary btn-small" onclick="openDrawer(${j.JobID})">View</button></div>
-        </div>
-      `).join('');
+      host.innerHTML = running.map(j => {
+        const chunkProgress = (j.InFlightChunksTotal && j.InFlightChunksTotal > 0)
+          ? 'chunk ' + (j.InFlightChunksCompleted || 0) + '/' + j.InFlightChunksTotal +
+            (j.InFlightRowsSoFar ? ' · ' + j.InFlightRowsSoFar.toLocaleString() + ' rows' : '')
+          : null;
+        return `
+          <div class="inflight-row">
+            <div><strong>${escape(j.Name || j.EndpointName)}</strong><div style="color:var(--text-muted);font-size:11px">${escape(j.ConnectorDisplay)}</div></div>
+            <div>${escape(j.BrandName || '—')}</div>
+            <div style="color:var(--text-muted)">started ${fmt.rel(j.LastRunAt)}${chunkProgress ? '<div style=\"font-family:Space Mono,monospace;font-size:11px;color:var(--blue);margin-top:2px\">' + escape(chunkProgress) + '</div>' : ''}</div>
+            <div><span class="badge badge-running">RUNNING</span></div>
+            <div><button class="btn btn-secondary btn-small" onclick="openDrawer(${j.JobID})">View</button></div>
+          </div>
+        `;
+      }).join('');
     }
 
     /* ---------- Drawer ---------- */
@@ -534,9 +554,9 @@
           ${d.runs.map(r => `
             <div class="run-row">
               <div><span class="badge badge-${r.Status.toLowerCase()}">${escape(r.Status)}</span></div>
-              <div>${fmt.rel(r.StartedAt)}</div>
+              <div>${fmt.rel(r.StartedAt)}${r.ChunksTotal ? '<div style=\"color:var(--blue);font-size:10px;font-family:Space Mono,monospace\">' + (r.ChunksCompleted||0) + '/' + r.ChunksTotal + ' chunks</div>' : ''}</div>
               <div>${fmt.dur(r.DurationMs)}</div>
-              <div>${r.RowsIngested ?? '—'}</div>
+              <div>${r.RowsIngested != null ? r.RowsIngested.toLocaleString() : '—'}</div>
               <div style="color:var(--text-muted);font-size:10px">${escape(r.TriggeredBy)}</div>
             </div>
             ${r.ErrorMessage ? '<div style="font-size:11px;color:#fca5a5;padding:4px 0 8px 90px;font-family:Space Mono,monospace">' + escape(r.ErrorMessage.slice(0,300)) + '</div>' : ''}
