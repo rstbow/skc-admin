@@ -708,6 +708,30 @@
       const { api } = window._SKCAdmin;
       const r = await api('POST', '/api/runner/amazon/financial-events', payload);
       const truncStr = r.truncated ? ' <span style="color:var(--yellow)">(truncated at ' + esc(r.truncatedReason || 'cap') + ')</span>' : '';
+
+      // Diagnostic: what Amazon actually returned, before flattening
+      let rawStr = '';
+      if (r.rawEventCounts) {
+        const entries = Object.entries(r.rawEventCounts).filter(([_, v]) => v > 0);
+        if (entries.length) {
+          rawStr = '<div style="margin-top:6px;font-size:11px;color:var(--text-muted)">'
+                 + 'Amazon returned: '
+                 + entries.map(([k, v]) => v + ' ' + k.replace('EventList','')).join(', ')
+                 + '</div>';
+        } else {
+          rawStr = '<div style="margin-top:6px;font-size:11px;color:var(--text-muted)">'
+                 + 'Amazon returned 0 events across all event types for this window.'
+                 + '</div>';
+        }
+      }
+      const windowStr = r.window
+        ? '<div style="margin-top:3px;font-size:11px;color:var(--text-dim)">Window: ' +
+          new Date(r.window.postedAfter).toLocaleString() +
+          (r.window.postedBefore ? ' → ' + new Date(r.window.postedBefore).toLocaleString() : ' → now') +
+          ' · ' + r.pages + ' API page' + (r.pages === 1 ? '' : 's') +
+          '</div>'
+        : '';
+
       status.innerHTML =
         '<span style="color:var(--green)">✓ Run ' + r.runID + '.</span> '
         + (r.eventsProcessed || 0).toLocaleString() + ' events · '
@@ -715,7 +739,7 @@
         + '<strong>' + (r.rowsUpdated || 0).toLocaleString() + '</strong> updated · '
         + (r.rowsUnchanged || 0).toLocaleString() + ' unchanged · '
         + ((r.elapsedMs || 0) / 1000).toFixed(1) + 's'
-        + truncStr;
+        + truncStr + windowStr + rawStr;
     } catch (e) {
       // The api() helper throws away the response body — refetch manually to
       // get sqlDetail from the 500 response so we can diagnose in the UI.
