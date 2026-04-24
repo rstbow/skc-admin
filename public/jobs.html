@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKU Compass Admin — Jobs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/tokens.css">
+<style>
+  .scheduler-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:var(--bg-subtle,#f1f5f9);font-size:13px;color:var(--text-muted,#64748b)}
+  .scheduler-pill.ok{background:#ecfdf5;color:#047857}
+  .scheduler-pill.warn{background:#fef3c7;color:#92400e}
+
+  .job-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
+  .job-card{background:#fff;border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:16px;cursor:pointer;transition:border-color .15s, box-shadow .15s}
+  .job-card:hover{border-color:#94a3b8;box-shadow:0 2px 8px rgba(15,23,42,.06)}
+  .job-card.failed{border-left:4px solid #dc2626}
+  .job-card.success{border-left:4px solid #059669}
+  .job-card.running{border-left:4px solid #2563eb}
+  .job-card.paused{opacity:.55;border-left:4px solid #94a3b8}
+  .job-card h3{margin:0 0 4px 0;font-size:15px;font-weight:600}
+  .job-card .sub{font-size:12px;color:var(--text-muted,#64748b);margin-bottom:12px}
+  .job-card .meta{font-family:'Space Mono',monospace;font-size:11px;color:#64748b;margin-bottom:8px}
+  .job-card .status{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid #f1f5f9;font-size:13px}
+  .job-card .consec{display:inline-block;padding:2px 8px;border-radius:4px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;margin-left:6px}
+
+  .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.02em}
+  .badge-success{background:#d1fae5;color:#065f46}
+  .badge-failed{background:#fee2e2;color:#991b1b}
+  .badge-running{background:#dbeafe;color:#1e40af}
+  .badge-paused{background:#e2e8f0;color:#475569}
+  .badge-canceled{background:#f3e8ff;color:#6b21a8}
+
+  .drawer-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;z-index:40}
+  .drawer-backdrop.open{display:block}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100vw);background:#fff;border-left:1px solid #e2e8f0;transform:translateX(100%);transition:transform .25s;z-index:50;overflow-y:auto;display:flex;flex-direction:column}
+  .drawer.open{transform:translateX(0)}
+  .drawer-head{padding:20px 24px 12px 24px;border-bottom:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+  .drawer-head h2{margin:0;font-size:18px}
+  .drawer-body{padding:20px 24px;flex:1}
+  .drawer-close{background:none;border:none;font-size:22px;color:#64748b;cursor:pointer;line-height:1}
+
+  .runbook{background:#f1f5f9;border-left:4px solid #2563eb;padding:12px 16px;border-radius:6px;margin:12px 0}
+  .runbook.sev-ERROR{border-left-color:#dc2626;background:#fef2f2}
+  .runbook.sev-WARN{border-left-color:#f59e0b;background:#fffbeb}
+  .runbook.sev-CRITICAL{border-left-color:#991b1b;background:#fef2f2}
+  .runbook h4{margin:0 0 6px 0;font-size:13px;font-weight:700}
+  .runbook .label{font-size:11px;font-weight:600;color:#475569;margin-top:10px;text-transform:uppercase;letter-spacing:.05em}
+  .runbook p{margin:2px 0;font-size:13px;white-space:pre-wrap;line-height:1.5}
+
+  .error-box{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 14px;border-radius:6px;font-family:'Space Mono',monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto}
+
+  .run-row{display:grid;grid-template-columns:80px 1fr 100px 70px 60px;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:12px;align-items:center}
+  .run-row:last-child{border-bottom:none}
+
+  .inflight-row{display:grid;grid-template-columns:2fr 1fr 1fr 80px 80px;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;align-items:center}
+
+  .empty{text-align:center;padding:40px 20px;color:#64748b;font-size:14px}
+
+  .actions{display:flex;gap:8px;flex-wrap:wrap}
+  .btn-small{padding:6px 10px;font-size:12px}
+</style>
+</head>
+<body data-page="jobs">
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Jobs</div>
+        <div class="topbar-sub">Scheduled ingestion runners · Node-native</div>
+      </div>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span id="schedulerPill" class="scheduler-pill">Scheduler: loading…</span>
+        <button class="btn btn-secondary" onclick="loadAll()">↻ Refresh</button>
+      </div>
+    </div>
+    <div class="page-content">
+      <div id="alertBox"></div>
+
+      <!-- In-flight -->
+      <div class="card" style="margin-bottom:18px">
+        <h3 style="margin:0 0 12px 0;font-size:14px">
+          Running now
+          <span id="inflightCount" style="color:#64748b;font-weight:400">(0)</span>
+        </h3>
+        <div id="inflightList"><div class="empty" style="padding:14px">No jobs currently running</div></div>
+      </div>
+
+      <!-- Jobs grid -->
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+          <h3 style="margin:0;font-size:14px">All jobs <span id="jobCount" style="color:#64748b;font-weight:400"></span></h3>
+          <div style="display:flex;gap:10px;align-items:center">
+            <label style="margin:0;font-size:12px;color:#64748b">
+              <input type="checkbox" id="showPaused" onchange="renderJobs()"> Show paused
+            </label>
+          </div>
+        </div>
+        <div id="jobGrid" class="job-grid"></div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Drawer -->
+  <div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawer()"></div>
+  <aside class="drawer" id="drawer">
+    <div class="drawer-head">
+      <div>
+        <h2 id="drawerTitle">—</h2>
+        <div id="drawerSub" style="font-size:12px;color:#64748b;margin-top:4px"></div>
+      </div>
+      <button class="drawer-close" onclick="closeDrawer()">×</button>
+    </div>
+    <div class="drawer-body" id="drawerBody">Loading…</div>
+  </aside>
+
+  <script src="/sidebar.js"></script>
+  <script>
+    let jobsCache = [];
+    let currentJobID = null;
+    let inflightTimer = null;
+
+    const fmt = {
+      rel(ts){
+        if (!ts) return '—';
+        const d = new Date(ts);
+        const secs = Math.round((Date.now() - d.getTime())/1000);
+        if (secs < 0)    return 'in ' + human(-secs);
+        if (secs < 60)   return secs + 's ago';
+        if (secs < 3600) return Math.round(secs/60) + 'm ago';
+        if (secs < 86400)return Math.round(secs/3600) + 'h ago';
+        return Math.round(secs/86400) + 'd ago';
+      },
+      dur(ms){
+        if (ms == null) return '—';
+        if (ms < 1000)  return ms + 'ms';
+        if (ms < 60000) return (ms/1000).toFixed(1) + 's';
+        return (ms/60000).toFixed(1) + 'm';
+      },
+      cron(expr){
+        if (!expr) return '—';
+        // Very light humanizer for common cases; full expr always shown on hover.
+        const map = {
+          '0 * * * *':        'every hour',
+          '*/5 * * * *':      'every 5 min',
+          '*/15 * * * *':     'every 15 min',
+          '0 */2 * * *':      'every 2 hours',
+          '0 */4 * * *':      'every 4 hours',
+          '0 */6 * * *':      'every 6 hours',
+          '0 0 * * *':        'daily midnight',
+          '0 8 * * *':        'daily 8am',
+          '0 0 * * 0':        'weekly (Sun)'
+        };
+        return map[expr.trim()] || expr;
+      }
+    };
+    function human(s){
+      if (s < 60)    return s + 's';
+      if (s < 3600)  return Math.round(s/60) + 'm';
+      if (s < 86400) return Math.round(s/3600) + 'h';
+      return Math.round(s/86400) + 'd';
+    }
+
+    function alertError(msg){
+      document.getElementById('alertBox').innerHTML =
+        '<div class="alert alert-error" style="background:#fef2f2;color:#991b1b;padding:10px 14px;border-radius:6px;margin-bottom:12px">' + msg + '</div>';
+      setTimeout(()=>{ document.getElementById('alertBox').innerHTML=''; }, 6000);
+    }
+
+    async function loadAll() {
+      await Promise.all([ loadScheduler(), loadJobs() ]);
+    }
+
+    async function loadScheduler(){
+      try {
+        const d = await window._SKCAdmin.api('GET', '/api/jobs/scheduler/status');
+        const pill = document.getElementById('schedulerPill');
+        const n = d.scheduler.scheduledCount;
+        pill.className = 'scheduler-pill ' + (n > 0 ? 'ok' : 'warn');
+        pill.innerHTML = '● Scheduler: ' + n + ' job' + (n===1?'':'s') + ' on ' + d.scheduler.workerHost;
+      } catch (e) {
+        document.getElementById('schedulerPill').innerHTML = '✗ Scheduler offline';
+        document.getElementById('schedulerPill').className = 'scheduler-pill warn';
+      }
+    }
+
+    async function loadJobs(){
+      try {
+        const d = await window._SKCAdmin.api('GET', '/api/jobs');
+        jobsCache = d.jobs || [];
+        renderJobs();
+        renderInflight();
+      } catch (e) {
+        alertError('Failed to load jobs: ' + e.message);
+      }
+    }
+
+    function renderJobs(){
+      const showPaused = document.getElementById('showPaused').checked;
+      const grid = document.getElementById('jobGrid');
+      const visible = jobsCache.filter(j => showPaused || j.IsActive);
+      document.getElementById('jobCount').textContent =
+        '(' + visible.length + (showPaused ? ' total' : ' active') + ')';
+
+      if (!visible.length) {
+        grid.innerHTML = '<div class="empty">No jobs yet. Create one via the API or run migration 019 to add the ExecutionMode column.</div>';
+        return;
+      }
+
+      grid.innerHTML = visible.map(j => {
+        const status = !j.IsActive ? 'paused' :
+                       j.InFlight > 0 ? 'running' :
+                       j.LastRunStatus === 'FAILED' ? 'failed' :
+                       j.LastRunStatus === 'SUCCESS' ? 'success' : '';
+        const badge = j.InFlight > 0 ? '<span class="badge badge-running">RUNNING</span>' :
+                      !j.IsActive ? '<span class="badge badge-paused">PAUSED</span>' :
+                      j.LastRunStatus === 'FAILED' ? '<span class="badge badge-failed">FAILED</span>' :
+                      j.LastRunStatus === 'SUCCESS' ? '<span class="badge badge-success">OK</span>' :
+                      '<span class="badge badge-paused">NEW</span>';
+        const consec = j.ConsecutiveFailures > 0 ?
+          '<span class="consec">⚠ ' + j.ConsecutiveFailures + ' fails</span>' : '';
+        return `
+          <div class="job-card ${status}" onclick="openDrawer(${j.JobID})">
+            <h3>${escape(j.Name || (j.EndpointName + ' · ' + (j.BrandName || '—')))}${consec}</h3>
+            <div class="sub">${escape(j.ConnectorDisplay)} · ${escape(j.EndpointName)}</div>
+            <div class="meta" title="${escape(j.CronExpression || '')}">
+              ⏱ ${escape(fmt.cron(j.CronExpression))} · ${escape(j.TimezoneIANA || 'America/Chicago')}
+            </div>
+            <div class="meta">Mode: ${escape(j.ExecutionMode)}</div>
+            <div class="status">
+              <span>Last run: ${fmt.rel(j.LastRunAt)}</span>
+              ${badge}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderInflight(){
+      const running = jobsCache.filter(j => j.InFlight > 0);
+      document.getElementById('inflightCount').textContent = '(' + running.length + ')';
+      const host = document.getElementById('inflightList');
+      if (!running.length) {
+        host.innerHTML = '<div class="empty" style="padding:14px">No jobs currently running</div>';
+        return;
+      }
+      host.innerHTML = running.map(j => `
+        <div class="inflight-row">
+          <div><strong>${escape(j.Name || j.EndpointName)}</strong><div style="color:#64748b;font-size:11px">${escape(j.ConnectorDisplay)}</div></div>
+          <div>${escape(j.BrandName || '—')}</div>
+          <div style="color:#64748b">started ${fmt.rel(j.LastRunAt)}</div>
+          <div><span class="badge badge-running">RUNNING</span></div>
+          <div><button class="btn btn-secondary btn-small" onclick="openDrawer(${j.JobID})">View</button></div>
+        </div>
+      `).join('');
+    }
+
+    /* ---------- Drawer ---------- */
+    async function openDrawer(jobID){
+      currentJobID = jobID;
+      document.getElementById('drawer').classList.add('open');
+      document.getElementById('drawerBackdrop').classList.add('open');
+      document.getElementById('drawerBody').innerHTML = 'Loading…';
+
+      try {
+        const d = await window._SKCAdmin.api('GET', '/api/jobs/' + jobID);
+        renderDrawer(d);
+      } catch (e) {
+        document.getElementById('drawerBody').innerHTML =
+          '<div class="error-box">Failed to load: ' + escape(e.message) + '</div>';
+      }
+    }
+
+    function closeDrawer(){
+      document.getElementById('drawer').classList.remove('open');
+      document.getElementById('drawerBackdrop').classList.remove('open');
+      currentJobID = null;
+    }
+
+    function renderDrawer(d){
+      const j = d.job;
+      document.getElementById('drawerTitle').textContent = j.Name || j.EndpointName;
+      document.getElementById('drawerSub').innerHTML =
+        escape(j.ConnectorDisplay) + ' · ' + escape(j.EndpointName) +
+        ' · brand: ' + escape(j.BrandName || '—');
+
+      const runbookHTML = d.runbook ? `
+        <div class="runbook sev-${escape(d.runbook.Severity)}">
+          <h4>📖 ${escape(d.runbook.Title)}</h4>
+          <div class="label">What it means</div>
+          <p>${escape(d.runbook.WhatItMeans)}</p>
+          <div class="label">How to fix</div>
+          <p>${escape(d.runbook.HowToFix)}</p>
+        </div>` : (j.LastErrorMessage ? `
+        <div class="runbook sev-WARN">
+          <h4>No runbook match</h4>
+          <p>This error doesn't match any runbook yet. Once you diagnose it, add a runbook entry in admin.ErrorRunbooks with a LIKE pattern for the error text so the next occurrence self-explains.</p>
+        </div>` : '');
+
+      const errorHTML = j.LastErrorMessage ? `
+        <h4 style="margin:18px 0 6px 0;font-size:13px">Last error</h4>
+        <div class="error-box">${escape(j.LastErrorMessage)}</div>
+        ${runbookHTML}
+      ` : '';
+
+      const runsHTML = d.runs && d.runs.length ? `
+        <h4 style="margin:18px 0 6px 0;font-size:13px">Recent runs</h4>
+        <div style="font-size:12px">
+          <div class="run-row" style="font-weight:600;color:#475569;border-bottom:2px solid #e2e8f0">
+            <div>Status</div><div>Started</div><div>Duration</div><div>Rows</div><div></div>
+          </div>
+          ${d.runs.map(r => `
+            <div class="run-row">
+              <div><span class="badge badge-${r.Status.toLowerCase()}">${escape(r.Status)}</span></div>
+              <div>${fmt.rel(r.StartedAt)}</div>
+              <div>${fmt.dur(r.DurationMs)}</div>
+              <div>${r.RowsIngested ?? '—'}</div>
+              <div style="color:#64748b;font-size:10px">${escape(r.TriggeredBy)}</div>
+            </div>
+            ${r.ErrorMessage ? '<div style="font-size:11px;color:#991b1b;padding:4px 0 8px 90px;font-family:Space Mono,monospace">' + escape(r.ErrorMessage.slice(0,300)) + '</div>' : ''}
+          `).join('')}
+        </div>
+      ` : '<p style="color:#64748b">No runs yet.</p>';
+
+      document.getElementById('drawerBody').innerHTML = `
+        <div class="actions" style="margin-bottom:14px">
+          <button class="btn" onclick="runNow(${j.JobID})">▶ Run now</button>
+          ${j.IsActive
+            ? '<button class="btn btn-secondary" onclick="pause(' + j.JobID + ')">⏸ Pause</button>'
+            : '<button class="btn btn-secondary" onclick="resume(' + j.JobID + ')">▶ Resume</button>'}
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;margin-bottom:10px">
+          <div><strong>Schedule</strong><div style="color:#64748b" title="${escape(j.CronExpression||'')}">${escape(fmt.cron(j.CronExpression))}</div></div>
+          <div><strong>Timezone</strong><div style="color:#64748b">${escape(j.TimezoneIANA||'—')}</div></div>
+          <div><strong>Mode</strong><div style="color:#64748b">${escape(j.ExecutionMode)}</div></div>
+          <div><strong>Job type</strong><div style="color:#64748b">${escape(j.JobType)}</div></div>
+          <div><strong>Last run</strong><div style="color:#64748b">${fmt.rel(j.LastRunAt)}</div></div>
+          <div><strong>Consec. failures</strong><div style="color:${j.ConsecutiveFailures>0?'#dc2626':'#64748b'}">${j.ConsecutiveFailures}</div></div>
+        </div>
+
+        ${errorHTML}
+        ${runsHTML}
+      `;
+    }
+
+    async function runNow(jobID){
+      try {
+        document.getElementById('alertBox').innerHTML =
+          '<div class="alert" style="background:#dbeafe;color:#1e40af;padding:8px 14px;border-radius:6px;margin-bottom:12px">Firing job ' + jobID + '…</div>';
+        const d = await window._SKCAdmin.api('POST', '/api/jobs/' + jobID + '/run');
+        if (d.ok) {
+          document.getElementById('alertBox').innerHTML =
+            '<div class="alert" style="background:#d1fae5;color:#065f46;padding:8px 14px;border-radius:6px;margin-bottom:12px">✓ Run ' + d.runID + ' succeeded</div>';
+        } else {
+          document.getElementById('alertBox').innerHTML =
+            '<div class="alert" style="background:#fef2f2;color:#991b1b;padding:8px 14px;border-radius:6px;margin-bottom:12px">✗ Run ' + d.runID + ' failed: ' + escape(d.error||'') + '</div>';
+        }
+        await loadJobs();
+        if (currentJobID) openDrawer(currentJobID);
+      } catch (e) { alertError('Run failed: ' + e.message); }
+    }
+
+    async function pause(jobID){
+      await window._SKCAdmin.api('POST', '/api/jobs/' + jobID + '/pause');
+      await loadJobs();
+      if (currentJobID) openDrawer(currentJobID);
+    }
+    async function resume(jobID){
+      await window._SKCAdmin.api('POST', '/api/jobs/' + jobID + '/resume');
+      await loadJobs();
+      if (currentJobID) openDrawer(currentJobID);
+    }
+
+    function escape(s){
+      if (s == null) return '';
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    // Boot
+    document.addEventListener('sidebarReady', async () => {
+      await loadAll();
+      // Poll for in-flight state every 5s
+      inflightTimer = setInterval(async () => { await loadJobs(); }, 5000);
+    });
+  </script>
+</body>
+</html>
