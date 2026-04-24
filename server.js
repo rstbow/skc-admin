@@ -46,6 +46,7 @@ app.use('/api/credentials', safeRequire('./routes/credentials', 'credentials'));
 app.use('/api/runs',        safeRequire('./routes/runs',        'runs'));
 app.use('/api/debug',       safeRequire('./routes/debug',       'debug'));
 app.use('/api/runner',      safeRequire('./routes/runner',      'runner'));
+app.use('/api/jobs',        safeRequire('./routes/jobs',        'jobs'));
 
 // Default route — serve login page
 app.get('/', (_req, res) => {
@@ -75,4 +76,15 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   console.log('[skc-admin-api] listening on port ' + PORT);
+
+  // Start the NODE_NATIVE scheduler. Any failure here is logged but MUST
+  // NOT bring down the HTTP app — the UI + manual "Run now" must keep
+  // working even if cron wiring is broken.
+  if (process.env.SCHEDULER_ENABLED !== 'false') {
+    require('./lib/scheduler').start().catch((e) => {
+      console.error('[startup] scheduler.start() failed:', e.message);
+    });
+  } else {
+    console.log('[startup] SCHEDULER_ENABLED=false — cron disabled');
+  }
 });
