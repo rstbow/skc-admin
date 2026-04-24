@@ -8,23 +8,65 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Mono:wght@400;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/css/tokens.css">
 <style>
-  .scheduler-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:var(--bg-subtle,#f1f5f9);font-size:13px;color:var(--text-muted,#64748b)}
+  .scheduler-pill{display:inline-flex;align-items:center;gap:8px;padding:6px 12px;border-radius:999px;background:#f1f5f9;font-size:13px;color:#64748b}
   .scheduler-pill.ok{background:#ecfdf5;color:#047857}
   .scheduler-pill.warn{background:#fef3c7;color:#92400e}
 
-  .job-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}
-  .job-card{background:#fff;border:1px solid var(--border,#e2e8f0);border-radius:10px;padding:16px;cursor:pointer;transition:border-color .15s, box-shadow .15s}
-  .job-card:hover{border-color:#94a3b8;box-shadow:0 2px 8px rgba(15,23,42,.06)}
-  .job-card.failed{border-left:4px solid #dc2626}
-  .job-card.success{border-left:4px solid #059669}
-  .job-card.running{border-left:4px solid #2563eb}
-  .job-card.paused{opacity:.55;border-left:4px solid #94a3b8}
-  .job-card h3{margin:0 0 4px 0;font-size:15px;font-weight:600}
-  .job-card .sub{font-size:12px;color:var(--text-muted,#64748b);margin-bottom:12px}
-  .job-card .meta{font-family:'Space Mono',monospace;font-size:11px;color:#64748b;margin-bottom:8px}
-  .job-card .status{display:flex;justify-content:space-between;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid #f1f5f9;font-size:13px}
-  .job-card .consec{display:inline-block;padding:2px 8px;border-radius:4px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:600;margin-left:6px}
+  /* Summary strip — one chip per connector */
+  .summary-strip{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .summary-chip{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:10px 14px;font-size:13px;display:flex;align-items:center;gap:10px}
+  .summary-chip.has-fail{border-color:#fecaca;background:#fef2f2}
+  .summary-chip .name{font-weight:600;color:#0f172a}
+  .summary-chip .count{color:#64748b;font-size:12px}
 
+  .stats-pill{display:inline-flex;align-items:center;gap:4px;font-size:11px;padding:2px 8px;border-radius:999px;background:#e2e8f0;color:#475569;font-weight:600}
+  .stats-pill.ok{background:#d1fae5;color:#065f46}
+  .stats-pill.warn{background:#fef3c7;color:#92400e}
+  .stats-pill.fail{background:#fee2e2;color:#991b1b}
+
+  /* Toolbar */
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+  .toolbar input[type="search"]{padding:8px 12px;border:1px solid #e2e8f0;border-radius:6px;min-width:260px;font-size:13px;font-family:inherit}
+  .toolbar select{padding:7px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;background:#fff}
+  .toolbar label{display:flex;align-items:center;gap:6px;font-size:13px;color:#475569;margin:0;cursor:pointer}
+  .toolbar .btn-small{padding:6px 10px;font-size:12px}
+
+  /* Tree */
+  .tree-group{border:1px solid #e2e8f0;border-radius:8px;margin-bottom:10px;overflow:hidden;background:#fff}
+  .tree-group-header{padding:12px 16px;background:#f8fafc;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;border-bottom:1px solid #e2e8f0;font-size:14px}
+  .tree-group-header:hover{background:#f1f5f9}
+  .tree-group.collapsed .tree-group-header{border-bottom:none}
+  .tree-group.collapsed .tree-group-body{display:none}
+  .caret{display:inline-block;width:14px;text-align:center;color:#64748b;transition:transform .15s;font-size:11px}
+  .tree-group.collapsed>.tree-group-header .caret,
+  .tree-subgroup.collapsed>.tree-subgroup-header .caret{transform:rotate(-90deg)}
+
+  .tree-subgroup{border-top:1px solid #f1f5f9}
+  .tree-subgroup:first-child{border-top:none}
+  .tree-subgroup-header{padding:9px 16px 9px 34px;background:#fafbfc;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;color:#475569;user-select:none}
+  .tree-subgroup-header:hover{background:#f1f5f9}
+  .tree-subgroup.collapsed .tree-subgroup-body{display:none}
+
+  .job-row{display:grid;grid-template-columns:12px minmax(180px,1.3fr) minmax(200px,2fr) 120px 56px;gap:14px;padding:10px 16px 10px 52px;border-top:1px solid #f8fafc;cursor:pointer;align-items:center;font-size:13px}
+  .job-row:hover{background:#f8fafc}
+  .job-row .status-dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+  .status-dot.success{background:#10b981}
+  .status-dot.failed{background:#ef4444}
+  .status-dot.running{background:#3b82f6;animation:pulse 1.4s infinite}
+  .status-dot.paused{background:#94a3b8}
+  .status-dot.new{background:#cbd5e1}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+  .job-row .brand{font-weight:500;color:#0f172a;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .job-row .meta{color:#64748b;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .job-row .meta .err{color:#b91c1c;font-family:'Space Mono',monospace;font-size:11px}
+  .job-row .mode{font-family:'Space Mono',monospace;font-size:10px;color:#94a3b8;text-align:left}
+  .job-row-actions{display:flex;gap:4px;justify-content:flex-end}
+  .btn-icon{padding:4px 8px;font-size:13px;border:1px solid #e2e8f0;background:#fff;border-radius:5px;cursor:pointer;color:#475569;line-height:1}
+  .btn-icon:hover{background:#f1f5f9;border-color:#cbd5e1}
+  .consec{color:#dc2626;font-size:11px;font-weight:600;margin-left:4px}
+
+  /* Badges */
   .badge{display:inline-block;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;letter-spacing:.02em}
   .badge-success{background:#d1fae5;color:#065f46}
   .badge-failed{background:#fee2e2;color:#991b1b}
@@ -32,6 +74,7 @@
   .badge-paused{background:#e2e8f0;color:#475569}
   .badge-canceled{background:#f3e8ff;color:#6b21a8}
 
+  /* Drawer */
   .drawer-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.35);display:none;z-index:40}
   .drawer-backdrop.open{display:block}
   .drawer{position:fixed;top:0;right:0;bottom:0;width:min(560px,100vw);background:#fff;border-left:1px solid #e2e8f0;transform:translateX(100%);transition:transform .25s;z-index:50;overflow-y:auto;display:flex;flex-direction:column}
@@ -40,7 +83,6 @@
   .drawer-head h2{margin:0;font-size:18px}
   .drawer-body{padding:20px 24px;flex:1}
   .drawer-close{background:none;border:none;font-size:22px;color:#64748b;cursor:pointer;line-height:1}
-
   .runbook{background:#f1f5f9;border-left:4px solid #2563eb;padding:12px 16px;border-radius:6px;margin:12px 0}
   .runbook.sev-ERROR{border-left-color:#dc2626;background:#fef2f2}
   .runbook.sev-WARN{border-left-color:#f59e0b;background:#fffbeb}
@@ -48,16 +90,12 @@
   .runbook h4{margin:0 0 6px 0;font-size:13px;font-weight:700}
   .runbook .label{font-size:11px;font-weight:600;color:#475569;margin-top:10px;text-transform:uppercase;letter-spacing:.05em}
   .runbook p{margin:2px 0;font-size:13px;white-space:pre-wrap;line-height:1.5}
-
   .error-box{background:#fef2f2;border:1px solid #fecaca;color:#991b1b;padding:10px 14px;border-radius:6px;font-family:'Space Mono',monospace;font-size:12px;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto}
-
   .run-row{display:grid;grid-template-columns:80px 1fr 100px 70px 60px;gap:10px;padding:8px 0;border-bottom:1px solid #f1f5f9;font-size:12px;align-items:center}
   .run-row:last-child{border-bottom:none}
 
   .inflight-row{display:grid;grid-template-columns:2fr 1fr 1fr 80px 80px;gap:12px;padding:10px 12px;border-bottom:1px solid #f1f5f9;font-size:13px;align-items:center}
-
-  .empty{text-align:center;padding:40px 20px;color:#64748b;font-size:14px}
-
+  .empty{text-align:center;padding:30px 20px;color:#64748b;font-size:13px}
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .btn-small{padding:6px 10px;font-size:12px}
 </style>
@@ -77,6 +115,9 @@
     <div class="page-content">
       <div id="alertBox"></div>
 
+      <!-- Per-connector summary chips -->
+      <div id="summaryStrip" class="summary-strip"></div>
+
       <!-- In-flight -->
       <div class="card" style="margin-bottom:18px">
         <h3 style="margin:0 0 12px 0;font-size:14px">
@@ -86,17 +127,25 @@
         <div id="inflightList"><div class="empty" style="padding:14px">No jobs currently running</div></div>
       </div>
 
-      <!-- Jobs grid -->
+      <!-- Tree -->
       <div class="card">
-        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-          <h3 style="margin:0;font-size:14px">All jobs <span id="jobCount" style="color:#64748b;font-weight:400"></span></h3>
-          <div style="display:flex;gap:10px;align-items:center">
-            <label style="margin:0;font-size:12px;color:#64748b">
-              <input type="checkbox" id="showPaused" onchange="renderJobs()"> Show paused
-            </label>
-          </div>
+        <div class="toolbar">
+          <input id="searchInput" type="search" placeholder="Search brand, endpoint, or connector…" oninput="renderTree()">
+          <select id="filterStatus" onchange="renderTree()">
+            <option value="">All statuses</option>
+            <option value="RUNNING">Running</option>
+            <option value="FAILED">Failed</option>
+            <option value="SUCCESS">OK</option>
+            <option value="NEW">Never run</option>
+            <option value="PAUSED">Paused</option>
+          </select>
+          <label><input type="checkbox" id="showPaused" onchange="renderTree()"> Show paused</label>
+          <span style="flex:1"></span>
+          <button class="btn btn-secondary btn-small" onclick="expandAll(true)">Expand all</button>
+          <button class="btn btn-secondary btn-small" onclick="expandAll(false)">Collapse all</button>
+          <span id="jobCount" style="color:#64748b;font-size:12px;margin-left:8px"></span>
         </div>
-        <div id="jobGrid" class="job-grid"></div>
+        <div id="treeContainer"></div>
       </div>
     </div>
   </main>
@@ -118,8 +167,9 @@
   <script>
     let jobsCache = [];
     let currentJobID = null;
-    let inflightTimer = null;
+    let pollTimer = null;
 
+    /* ---------- Formatters ---------- */
     const fmt = {
       rel(ts){
         if (!ts) return '—';
@@ -138,18 +188,19 @@
         return (ms/60000).toFixed(1) + 'm';
       },
       cron(expr){
-        if (!expr) return '—';
-        // Very light humanizer for common cases; full expr always shown on hover.
+        if (!expr) return 'manual';
         const map = {
-          '0 * * * *':        'every hour',
-          '*/5 * * * *':      'every 5 min',
-          '*/15 * * * *':     'every 15 min',
-          '0 */2 * * *':      'every 2 hours',
-          '0 */4 * * *':      'every 4 hours',
-          '0 */6 * * *':      'every 6 hours',
-          '0 0 * * *':        'daily midnight',
-          '0 8 * * *':        'daily 8am',
-          '0 0 * * 0':        'weekly (Sun)'
+          '* * * * *':      'every minute',
+          '*/5 * * * *':    'every 5 min',
+          '*/15 * * * *':   'every 15 min',
+          '0 * * * *':      'every hour',
+          '0 */2 * * *':    'every 2 hours',
+          '0 */4 * * *':    'every 4 hours',
+          '0 */6 * * *':    'every 6 hours',
+          '0 */12 * * *':   'every 12 hours',
+          '0 0 * * *':      'daily midnight',
+          '0 8 * * *':      'daily 8am',
+          '0 0 * * 0':      'weekly (Sun)'
         };
         return map[expr.trim()] || expr;
       }
@@ -160,6 +211,11 @@
       if (s < 86400) return Math.round(s/3600) + 'h';
       return Math.round(s/86400) + 'd';
     }
+    function escape(s){
+      if (s == null) return '';
+      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function escapeAttr(s){ return escape(String(s).replace(/[:|]/g, '_')); }
 
     function alertError(msg){
       document.getElementById('alertBox').innerHTML =
@@ -167,10 +223,42 @@
       setTimeout(()=>{ document.getElementById('alertBox').innerHTML=''; }, 6000);
     }
 
-    async function loadAll() {
-      await Promise.all([ loadScheduler(), loadJobs() ]);
+    /* ---------- Collapse state (localStorage) ---------- */
+    function isCollapsed(key){
+      try { return localStorage.getItem('jobs.collapsed.' + key) === '1'; } catch (_) { return false; }
+    }
+    function setCollapsed(key, v){
+      try { localStorage.setItem('jobs.collapsed.' + key, v ? '1' : '0'); } catch (_) {}
+    }
+    function toggleGroup(key){
+      const safe = key.replace(/"/g, '\\"');
+      const el = document.querySelector('[data-key="' + safe + '"]');
+      if (!el) return;
+      const willCollapse = !el.classList.contains('collapsed');
+      el.classList.toggle('collapsed', willCollapse);
+      setCollapsed(key, willCollapse);
+    }
+    function expandAll(expand){
+      document.querySelectorAll('.tree-group, .tree-subgroup').forEach(el => {
+        const key = el.getAttribute('data-key');
+        el.classList.toggle('collapsed', !expand);
+        if (key) setCollapsed(key, !expand);
+      });
     }
 
+    /* ---------- Status helper ---------- */
+    function jobStatus(j){
+      if (j.InFlight > 0) return 'RUNNING';
+      if (!j.IsActive) return 'PAUSED';
+      if (j.LastRunStatus === 'FAILED') return 'FAILED';
+      if (j.LastRunStatus === 'SUCCESS') return 'SUCCESS';
+      return 'NEW';
+    }
+
+    /* ---------- Data load ---------- */
+    async function loadAll(){
+      await Promise.all([ loadScheduler(), loadJobs() ]);
+    }
     async function loadScheduler(){
       try {
         const d = await window._SKCAdmin.api('GET', '/api/jobs/scheduler/status');
@@ -178,69 +266,186 @@
         const n = d.scheduler.scheduledCount;
         pill.className = 'scheduler-pill ' + (n > 0 ? 'ok' : 'warn');
         pill.innerHTML = '● Scheduler: ' + n + ' job' + (n===1?'':'s') + ' on ' + d.scheduler.workerHost;
-      } catch (e) {
+      } catch (_) {
         document.getElementById('schedulerPill').innerHTML = '✗ Scheduler offline';
         document.getElementById('schedulerPill').className = 'scheduler-pill warn';
       }
     }
-
     async function loadJobs(){
       try {
         const d = await window._SKCAdmin.api('GET', '/api/jobs');
         jobsCache = d.jobs || [];
-        renderJobs();
+        renderSummary();
+        renderTree();
         renderInflight();
       } catch (e) {
         alertError('Failed to load jobs: ' + e.message);
       }
     }
 
-    function renderJobs(){
-      const showPaused = document.getElementById('showPaused').checked;
-      const grid = document.getElementById('jobGrid');
-      const visible = jobsCache.filter(j => showPaused || j.IsActive);
-      document.getElementById('jobCount').textContent =
-        '(' + visible.length + (showPaused ? ' total' : ' active') + ')';
+    /* ---------- Summary strip ---------- */
+    function renderSummary(){
+      const strip = document.getElementById('summaryStrip');
+      const byConn = new Map();
+      for (const j of jobsCache) {
+        if (!byConn.has(j.ConnectorName)) {
+          byConn.set(j.ConnectorName, { display: j.ConnectorDisplay, total:0, ok:0, fail:0, running:0, paused:0, neverRun:0 });
+        }
+        const c = byConn.get(j.ConnectorName);
+        c.total++;
+        if (j.InFlight > 0) c.running++;
+        else if (!j.IsActive) c.paused++;
+        else if (j.LastRunStatus === 'FAILED') c.fail++;
+        else if (j.LastRunStatus === 'SUCCESS') c.ok++;
+        else c.neverRun++;
+      }
 
-      if (!visible.length) {
-        grid.innerHTML = '<div class="empty">No jobs yet. Create one via the API or run migration 019 to add the ExecutionMode column.</div>';
+      if (!byConn.size) { strip.innerHTML = ''; return; }
+
+      strip.innerHTML = Array.from(byConn.values()).map(c => `
+        <div class="summary-chip ${c.fail > 0 ? 'has-fail' : ''}">
+          <span class="name">${escape(c.display)}</span>
+          <span class="count">${c.total} job${c.total===1?'':'s'}</span>
+          ${c.running ? `<span class="stats-pill warn">${c.running} running</span>` : ''}
+          ${c.fail    ? `<span class="stats-pill fail">${c.fail} failing</span>` : ''}
+          ${c.ok      ? `<span class="stats-pill ok">${c.ok} ok</span>` : ''}
+          ${c.paused  ? `<span class="stats-pill">${c.paused} paused</span>` : ''}
+          ${c.neverRun? `<span class="stats-pill">${c.neverRun} new</span>` : ''}
+        </div>
+      `).join('');
+    }
+
+    /* ---------- Tree render ---------- */
+    function renderTree(){
+      const container = document.getElementById('treeContainer');
+      const showPaused = document.getElementById('showPaused').checked;
+      const search = (document.getElementById('searchInput').value || '').toLowerCase().trim();
+      const statusFilter = document.getElementById('filterStatus').value;
+
+      const visible = jobsCache.filter(j => {
+        if (!showPaused && !j.IsActive) return false;
+        if (statusFilter && jobStatus(j) !== statusFilter) return false;
+        if (search){
+          const hay = ((j.Name||'') + ' ' + (j.BrandName||'') + ' ' + (j.EndpointName||'') + ' ' + (j.ConnectorDisplay||'') + ' ' + (j.JobType||'')).toLowerCase();
+          if (!hay.includes(search)) return false;
+        }
+        return true;
+      });
+
+      document.getElementById('jobCount').textContent = '(' + visible.length + ' of ' + jobsCache.length + ')';
+
+      if (!visible.length){
+        container.innerHTML = '<div class="empty">No jobs match the current filter.' +
+          (jobsCache.length === 0 ? ' Run migration 020 (or later) to seed jobs.' : '') + '</div>';
         return;
       }
 
-      grid.innerHTML = visible.map(j => {
-        const status = !j.IsActive ? 'paused' :
-                       j.InFlight > 0 ? 'running' :
-                       j.LastRunStatus === 'FAILED' ? 'failed' :
-                       j.LastRunStatus === 'SUCCESS' ? 'success' : '';
-        const badge = j.InFlight > 0 ? '<span class="badge badge-running">RUNNING</span>' :
-                      !j.IsActive ? '<span class="badge badge-paused">PAUSED</span>' :
-                      j.LastRunStatus === 'FAILED' ? '<span class="badge badge-failed">FAILED</span>' :
-                      j.LastRunStatus === 'SUCCESS' ? '<span class="badge badge-success">OK</span>' :
-                      '<span class="badge badge-paused">NEW</span>';
-        const consec = j.ConsecutiveFailures > 0 ?
-          '<span class="consec">⚠ ' + j.ConsecutiveFailures + ' fails</span>' : '';
-        return `
-          <div class="job-card ${status}" onclick="openDrawer(${j.JobID})">
-            <h3>${escape(j.Name || (j.EndpointName + ' · ' + (j.BrandName || '—')))}${consec}</h3>
-            <div class="sub">${escape(j.ConnectorDisplay)} · ${escape(j.EndpointName)}</div>
-            <div class="meta" title="${escape(j.CronExpression || '')}">
-              ⏱ ${escape(fmt.cron(j.CronExpression))} · ${escape(j.TimezoneIANA || 'America/Chicago')}
+      // Group: connector → endpoint|jobtype → job
+      const byConn = new Map();
+      for (const j of visible) {
+        if (!byConn.has(j.ConnectorName)) {
+          byConn.set(j.ConnectorName, { display: j.ConnectorDisplay, endpoints: new Map() });
+        }
+        const conn = byConn.get(j.ConnectorName);
+        const subkey = j.EndpointName + '|' + j.JobType;
+        if (!conn.endpoints.has(subkey)) {
+          conn.endpoints.set(subkey, {
+            endpointName: j.EndpointName,
+            endpointDisplay: j.EndpointDisplay,
+            jobType: j.JobType,
+            cron: j.CronExpression,
+            jobs: []
+          });
+        }
+        conn.endpoints.get(subkey).jobs.push(j);
+      }
+
+      let html = '';
+      for (const [connName, conn] of byConn) {
+        const allJobs = Array.from(conn.endpoints.values()).flatMap(e => e.jobs);
+        const fails = allJobs.filter(j => jobStatus(j) === 'FAILED').length;
+        const running = allJobs.filter(j => jobStatus(j) === 'RUNNING').length;
+        const okCount = allJobs.filter(j => jobStatus(j) === 'SUCCESS').length;
+
+        const groupPill =
+          fails > 0   ? `<span class="stats-pill fail">${fails} failing</span>` :
+          running > 0 ? `<span class="stats-pill warn">${running} running</span>` :
+          okCount > 0 ? `<span class="stats-pill ok">${okCount} OK</span>` :
+                        `<span class="stats-pill">${allJobs.length} new</span>`;
+
+        const connKey = 'conn:' + connName;
+        const connCollapsed = isCollapsed(connKey);
+
+        html += `
+          <div class="tree-group ${connCollapsed ? 'collapsed' : ''}" data-key="${escapeAttr(connKey)}">
+            <div class="tree-group-header" onclick="toggleGroup('${escapeAttr(connKey)}')">
+              <span class="caret">▼</span>
+              <span style="font-weight:600">${escape(conn.display)}</span>
+              <span style="color:#64748b;font-size:12px">· ${allJobs.length} jobs</span>
+              <span style="margin-left:auto">${groupPill}</span>
             </div>
-            <div class="meta">Mode: ${escape(j.ExecutionMode)}</div>
-            <div class="status">
-              <span>Last run: ${fmt.rel(j.LastRunAt)}</span>
-              ${badge}
-            </div>
-          </div>
+            <div class="tree-group-body">
         `;
-      }).join('');
+
+        for (const [subkey, ep] of conn.endpoints) {
+          const epKey = 'ep:' + connName + ':' + subkey;
+          const epCollapsed = isCollapsed(epKey);
+          const cronHuman = fmt.cron(ep.cron);
+
+          html += `
+            <div class="tree-subgroup ${epCollapsed ? 'collapsed' : ''}" data-key="${escapeAttr(epKey)}">
+              <div class="tree-subgroup-header" onclick="toggleGroup('${escapeAttr(epKey)}')">
+                <span class="caret">▼</span>
+                <strong style="color:#0f172a">${escape(ep.endpointName)}</strong>
+                <span style="color:#94a3b8">·</span>
+                <span>${escape(ep.jobType)}</span>
+                <span style="color:#94a3b8">·</span>
+                <span title="${escape(ep.cron || 'manual trigger')}">${escape(cronHuman)}</span>
+                <span style="margin-left:auto;color:#64748b;font-size:11px">${ep.jobs.length} brand${ep.jobs.length===1?'':'s'}</span>
+              </div>
+              <div class="tree-subgroup-body">
+          `;
+
+          for (const j of ep.jobs) {
+            const status = jobStatus(j);
+            const statusClass = status.toLowerCase();
+            const lastRunTxt = j.LastRunAt ? fmt.rel(j.LastRunAt) : 'never';
+            const metaTxt =
+              status === 'RUNNING' ? 'running…' :
+              status === 'FAILED'  ? ('<span class="err">✗ ' + escape((j.LastErrorMessage||'error').slice(0,80)) + '</span>') :
+              status === 'SUCCESS' ? ('✓ ' + lastRunTxt + (j.LastSuccessDurationMs ? ' · ' + fmt.dur(j.LastSuccessDurationMs) : '')) :
+              status === 'PAUSED'  ? 'paused' :
+                                     'never run';
+            const consec = j.ConsecutiveFailures > 0 ? '<span class="consec">⚠ ' + j.ConsecutiveFailures + '</span>' : '';
+
+            html += `
+              <div class="job-row" onclick="openDrawer(${j.JobID})">
+                <span class="status-dot ${statusClass}"></span>
+                <div class="brand" title="${escape(j.BrandName || '—')}">${escape(j.BrandName || '—')}${consec}</div>
+                <div class="meta">${metaTxt}</div>
+                <div class="mode">${escape(j.ExecutionMode)}</div>
+                <div class="job-row-actions">
+                  <button class="btn-icon" title="Run now" onclick="event.stopPropagation();runNow(${j.JobID});">▶</button>
+                </div>
+              </div>
+            `;
+          }
+
+          html += `</div></div>`;
+        }
+
+        html += `</div></div>`;
+      }
+
+      container.innerHTML = html;
     }
 
+    /* ---------- Inflight ---------- */
     function renderInflight(){
       const running = jobsCache.filter(j => j.InFlight > 0);
       document.getElementById('inflightCount').textContent = '(' + running.length + ')';
       const host = document.getElementById('inflightList');
-      if (!running.length) {
+      if (!running.length){
         host.innerHTML = '<div class="empty" style="padding:14px">No jobs currently running</div>';
         return;
       }
@@ -261,7 +466,6 @@
       document.getElementById('drawer').classList.add('open');
       document.getElementById('drawerBackdrop').classList.add('open');
       document.getElementById('drawerBody').innerHTML = 'Loading…';
-
       try {
         const d = await window._SKCAdmin.api('GET', '/api/jobs/' + jobID);
         renderDrawer(d);
@@ -270,18 +474,17 @@
           '<div class="error-box">Failed to load: ' + escape(e.message) + '</div>';
       }
     }
-
     function closeDrawer(){
       document.getElementById('drawer').classList.remove('open');
       document.getElementById('drawerBackdrop').classList.remove('open');
       currentJobID = null;
     }
-
     function renderDrawer(d){
       const j = d.job;
       document.getElementById('drawerTitle').textContent = j.Name || j.EndpointName;
       document.getElementById('drawerSub').innerHTML =
         escape(j.ConnectorDisplay) + ' · ' + escape(j.EndpointName) +
+        ' · ' + escape(j.JobType) +
         ' · brand: ' + escape(j.BrandName || '—');
 
       const runbookHTML = d.runbook ? `
@@ -301,6 +504,10 @@
         <h4 style="margin:18px 0 6px 0;font-size:13px">Last error</h4>
         <div class="error-box">${escape(j.LastErrorMessage)}</div>
         ${runbookHTML}
+      ` : '';
+
+      const paramsHTML = j.Params ? `
+        <div><strong>Params</strong><div style="color:#64748b;font-family:Space Mono,monospace;font-size:11px">${escape(j.Params)}</div></div>
       ` : '';
 
       const runsHTML = d.runs && d.runs.length ? `
@@ -337,6 +544,7 @@
           <div><strong>Job type</strong><div style="color:#64748b">${escape(j.JobType)}</div></div>
           <div><strong>Last run</strong><div style="color:#64748b">${fmt.rel(j.LastRunAt)}</div></div>
           <div><strong>Consec. failures</strong><div style="color:${j.ConsecutiveFailures>0?'#dc2626':'#64748b'}">${j.ConsecutiveFailures}</div></div>
+          ${paramsHTML}
         </div>
 
         ${errorHTML}
@@ -344,6 +552,7 @@
       `;
     }
 
+    /* ---------- Actions ---------- */
     async function runNow(jobID){
       try {
         document.getElementById('alertBox').innerHTML =
@@ -360,7 +569,6 @@
         if (currentJobID) openDrawer(currentJobID);
       } catch (e) { alertError('Run failed: ' + e.message); }
     }
-
     async function pause(jobID){
       await window._SKCAdmin.api('POST', '/api/jobs/' + jobID + '/pause');
       await loadJobs();
@@ -372,16 +580,10 @@
       if (currentJobID) openDrawer(currentJobID);
     }
 
-    function escape(s){
-      if (s == null) return '';
-      return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    }
-
-    // Boot
+    /* ---------- Boot ---------- */
     document.addEventListener('sidebarReady', async () => {
       await loadAll();
-      // Poll for in-flight state every 5s
-      inflightTimer = setInterval(async () => { await loadJobs(); }, 5000);
+      pollTimer = setInterval(loadJobs, 5000);
     });
   </script>
 </body>
