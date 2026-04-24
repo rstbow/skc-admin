@@ -42,6 +42,7 @@ app.use('/api/auth',        safeRequire('./routes/auth',        'auth'));
 app.use('/api/connectors',  safeRequire('./routes/connectors',  'connectors'));
 app.use('/api/endpoints',   safeRequire('./routes/endpoints',   'endpoints'));
 app.use('/api/brands',      safeRequire('./routes/brands',      'brands'));
+app.use('/api/brand-import', safeRequire('./routes/brand-import', 'brand-import'));
 app.use('/api/credentials', safeRequire('./routes/credentials', 'credentials'));
 app.use('/api/runs',        safeRequire('./routes/runs',        'runs'));
 app.use('/api/debug',       safeRequire('./routes/debug',       'debug'));

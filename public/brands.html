@@ -15,7 +15,10 @@
         <div class="topbar-title">Brands</div>
         <div class="topbar-sub">Clients this admin tool manages data for</div>
       </div>
-      <button class="btn" onclick="openModal()">+ Add Brand</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-secondary" onclick="openImportModal()">↓ Import from staging</button>
+        <button class="btn" onclick="openModal()">+ Add Brand</button>
+      </div>
     </div>
     <div class="page-content">
       <div id="alertBox"></div>
@@ -31,6 +34,49 @@
       </div>
     </div>
   </main>
+
+  <!-- Import from staging modal -->
+  <div class="modal-backdrop" id="importModal">
+    <div class="modal" style="max-width:900px">
+      <h2>Import Brands from Staging</h2>
+      <div class="subtitle">Source: <code>vs-ims-staging.dbo.tbl_PPA_L_Brand</code> · active + trial only · dedupes against existing admin.Brands by BrandID + name.</div>
+
+      <div style="display:flex;gap:10px;align-items:center;margin:14px 0">
+        <input id="importSearch" type="search" placeholder="Search brand name…"
+               style="flex:1;padding:8px 12px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px"
+               oninput="renderImportTable()">
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--text-muted);margin:0;cursor:pointer">
+          <input type="checkbox" id="importHideDup" checked onchange="renderImportTable()"> Hide already-imported
+        </label>
+        <span id="importCounts" style="color:var(--text-muted);font-size:12px;white-space:nowrap"></span>
+      </div>
+
+      <div style="max-height:55vh;overflow-y:auto;border:1px solid var(--border);border-radius:6px">
+        <table style="margin:0">
+          <thead style="position:sticky;top:0;background:var(--surface2);z-index:1">
+            <tr>
+              <th style="width:36px"><input type="checkbox" id="importSelectAll" onchange="toggleSelectAll(this.checked)"></th>
+              <th>Brand</th>
+              <th style="width:80px">ID</th>
+              <th>Seller ID</th>
+              <th>Contact</th>
+              <th style="width:80px">Status</th>
+              <th style="width:110px">State</th>
+            </tr>
+          </thead>
+          <tbody id="importTbody">
+            <tr><td colspan="7" class="empty-state">Loading candidates…</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="modal-actions" style="margin-top:14px">
+        <span id="importSelected" style="color:var(--text-muted);font-size:13px;margin-right:auto">0 selected</span>
+        <button type="button" class="btn btn-secondary" onclick="closeImportModal()">Cancel</button>
+        <button type="button" class="btn" id="importSubmitBtn" onclick="runImport()" disabled>Import selected</button>
+      </div>
+    </div>
+  </div>
 
   <div class="modal-backdrop" id="modal">
     <div class="modal">
@@ -150,6 +196,127 @@
 
   function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  /* ---------- Import from staging modal ---------- */
+  let importCandidates = [];
+  let importSelection  = new Set();
+
+  async function openImportModal() {
+    document.getElementById('importModal').classList.add('show');
+    document.getElementById('importTbody').innerHTML = '<tr><td colspan="7" class="empty-state">Loading candidates…</td></tr>';
+    importCandidates = [];
+    importSelection.clear();
+    updateImportSelectedCount();
+    try {
+      const { api } = window._SKCAdmin;
+      const d = await api('GET', '/api/brand-import/candidates');
+      importCandidates = d.candidates || [];
+      document.getElementById('importCounts').textContent =
+        d.counts.total + ' active · ' + d.counts.newlyImportable + ' importable · ' + d.counts.alreadyImported + ' already imported';
+      renderImportTable();
+    } catch (e) {
+      document.getElementById('importTbody').innerHTML =
+        '<tr><td colspan="7" class="empty-state" style="color:var(--red)">Failed: ' + esc(e.message) + '</td></tr>';
+    }
+  }
+
+  function closeImportModal() {
+    document.getElementById('importModal').classList.remove('show');
+  }
+
+  function renderImportTable() {
+    const search = (document.getElementById('importSearch').value || '').toLowerCase().trim();
+    const hideDup = document.getElementById('importHideDup').checked;
+    const filtered = importCandidates.filter(c => {
+      if (hideDup && c.alreadyImported) return false;
+      if (search) {
+        const hay = (c.brandName + ' ' + (c.sellerId || '') + ' ' + (c.contactEmail || '') + ' ' + c.brandID).toLowerCase();
+        if (!hay.includes(search)) return false;
+      }
+      return true;
+    });
+
+    const body = document.getElementById('importTbody');
+    if (!filtered.length) {
+      body.innerHTML = '<tr><td colspan="7" class="empty-state">No candidates match.</td></tr>';
+      document.getElementById('importSelectAll').checked = false;
+      return;
+    }
+    body.innerHTML = filtered.map(c => {
+      const checked   = importSelection.has(c.brandID) ? 'checked' : '';
+      const disabled  = c.alreadyImported ? 'disabled' : '';
+      const stateCell = c.alreadyImported
+        ? '<span class="badge badge-muted">Already</span>'
+        : '<span class="badge badge-green">New</span>';
+      return `
+        <tr style="${c.alreadyImported ? 'opacity:.55' : ''}">
+          <td><input type="checkbox" ${checked} ${disabled} onchange="toggleSelect(${c.brandID}, this.checked)"></td>
+          <td><strong>${esc(c.brandName)}</strong></td>
+          <td class="mono">${c.brandID}</td>
+          <td class="mono" style="font-size:11px">${esc(c.sellerId || '—')}</td>
+          <td style="font-size:12px;color:var(--text-muted)">${esc(c.contactName || c.contactEmail || '—')}</td>
+          <td><span class="badge ${c.status === 'Active' ? 'badge-green' : 'badge-muted'}">${esc(c.status || '—')}</span></td>
+          <td>${stateCell}</td>
+        </tr>
+      `;
+    }).join('');
+    // Reflect select-all state
+    const selectableIDs = filtered.filter(c => !c.alreadyImported).map(c => c.brandID);
+    const allSelected = selectableIDs.length > 0 && selectableIDs.every(id => importSelection.has(id));
+    document.getElementById('importSelectAll').checked = allSelected;
+  }
+
+  function toggleSelect(brandID, checked) {
+    if (checked) importSelection.add(brandID);
+    else importSelection.delete(brandID);
+    updateImportSelectedCount();
+  }
+
+  function toggleSelectAll(checked) {
+    const search = (document.getElementById('importSearch').value || '').toLowerCase().trim();
+    const hideDup = document.getElementById('importHideDup').checked;
+    for (const c of importCandidates) {
+      if (hideDup && c.alreadyImported) continue;
+      if (c.alreadyImported) continue;
+      if (search) {
+        const hay = (c.brandName + ' ' + (c.sellerId || '') + ' ' + (c.contactEmail || '') + ' ' + c.brandID).toLowerCase();
+        if (!hay.includes(search)) continue;
+      }
+      if (checked) importSelection.add(c.brandID);
+      else importSelection.delete(c.brandID);
+    }
+    renderImportTable();
+    updateImportSelectedCount();
+  }
+
+  function updateImportSelectedCount() {
+    const n = importSelection.size;
+    document.getElementById('importSelected').textContent = n + ' selected';
+    document.getElementById('importSubmitBtn').disabled = n === 0;
+  }
+
+  async function runImport() {
+    const btn = document.getElementById('importSubmitBtn');
+    btn.disabled = true;
+    const n = importSelection.size;
+    btn.textContent = 'Importing ' + n + '…';
+    try {
+      const { api } = window._SKCAdmin;
+      const d = await api('POST', '/api/brand-import', { brandIDs: Array.from(importSelection) });
+      const msg = `Imported ${d.counts.imported} · skipped ${d.counts.skipped}` +
+                  (d.counts.errored ? ` · ${d.counts.errored} errors` : '');
+      document.getElementById('alertBox').innerHTML =
+        '<div class="alert" style="background:rgba(34,197,94,.12);color:var(--green);border:1px solid rgba(34,197,94,.3);padding:8px 14px;border-radius:6px;margin-bottom:12px">' + msg + '</div>';
+      setTimeout(() => { document.getElementById('alertBox').innerHTML = ''; }, 6000);
+      closeImportModal();
+      await load();
+    } catch (e) {
+      alert('Import failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Import selected';
+    }
   }
 </script>
 </body>
