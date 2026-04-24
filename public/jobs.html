@@ -459,12 +459,18 @@
               ? 'chunk ' + (j.InFlightChunksCompleted || 0) + '/' + j.InFlightChunksTotal +
                 (j.InFlightRowsSoFar ? ' · ' + j.InFlightRowsSoFar.toLocaleString() + ' rows' : '')
               : null;
-            const metaTxt =
-              status === 'RUNNING' ? (chunkProgress || 'running…') :
-              status === 'FAILED'  ? ('<span class="err">✗ ' + escape((j.LastErrorMessage||'error').slice(0,80)) + '</span>') :
-              status === 'SUCCESS' ? ('✓ ' + lastRunTxt + (j.LastSuccessDurationMs ? ' · ' + fmt.dur(j.LastSuccessDurationMs) : '')) :
-              status === 'PAUSED'  ? 'paused' :
-                                     'never run';
+            const nextRunTxt = (j.NextRunAt && j.IsActive && status !== 'RUNNING')
+              ? 'next ' + fmt.rel(j.NextRunAt)
+              : '';
+            const lastAndNext = [
+              status === 'SUCCESS' ? '✓ ' + lastRunTxt + (j.LastSuccessDurationMs ? ' · ' + fmt.dur(j.LastSuccessDurationMs) : '') : null,
+              status === 'FAILED'  ? '<span class="err">✗ ' + escape((j.LastErrorMessage||'error').slice(0,60)) + '</span>' : null,
+              status === 'RUNNING' ? (chunkProgress || 'running…') : null,
+              status === 'PAUSED'  ? 'paused' : null,
+              status === 'NEW'     ? 'never run' : null,
+              nextRunTxt
+            ].filter(Boolean).join(' · ');
+            const metaTxt = lastAndNext || '—';
             const consec = j.ConsecutiveFailures > 0 ? '<span class="consec">⚠ ' + j.ConsecutiveFailures + '</span>' : '';
 
             html += `
@@ -594,6 +600,7 @@
 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:13px;margin-bottom:10px">
           <div><strong>Schedule</strong><div style="color:var(--text-muted)" title="${escape(j.CronExpression||'')}">${escape(fmt.cron(j.CronExpression))}</div></div>
+          <div><strong>Next run</strong><div style="color:var(--text-muted)">${j.NextRunAt && j.IsActive ? fmt.rel(j.NextRunAt) : '—'}</div></div>
           <div><strong>Timezone</strong><div style="color:var(--text-muted)">${escape(j.TimezoneIANA||'—')}</div></div>
           <div><strong>Mode</strong><div style="color:var(--text-muted)">${escape(j.ExecutionMode)}</div></div>
           <div><strong>Job type</strong><div style="color:var(--text-muted)">${escape(j.JobType)}</div></div>
@@ -601,6 +608,45 @@
           <div><strong>Consec. failures</strong><div style="color:${j.ConsecutiveFailures>0?'var(--red)':'var(--text-muted)'}">${j.ConsecutiveFailures}</div></div>
           ${paramsHTML}
         </div>
+
+        <!-- Schedule editor -->
+        <details style="margin:14px 0;padding:12px;background:var(--surface2);border:1px solid var(--border);border-radius:6px">
+          <summary style="cursor:pointer;font-weight:600;font-size:13px;color:var(--text)">Edit schedule</summary>
+          <div style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px">
+            <div style="grid-column:1/3">
+              <label style="display:block;margin-bottom:4px;color:var(--text-muted)">Preset</label>
+              <select id="schedPreset" onchange="applyPreset(this.value)" style="width:100%;padding:7px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text)">
+                <option value="">— Choose a preset —</option>
+                <option value="*/5 * * * *">every 5 min</option>
+                <option value="*/15 * * * *">every 15 min</option>
+                <option value="0 * * * *">every hour</option>
+                <option value="0 */2 * * *">every 2 hours</option>
+                <option value="0 */4 * * *">every 4 hours</option>
+                <option value="0 */6 * * *">every 6 hours</option>
+                <option value="0 */12 * * *">every 12 hours</option>
+                <option value="0 0 * * *">daily midnight</option>
+                <option value="0 8 * * *">daily 8am</option>
+                <option value="0 0 * * 0">weekly (Sunday)</option>
+                <option value="__CLEAR__">(none — manual only)</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block;margin-bottom:4px;color:var(--text-muted)">Cron expression</label>
+              <input id="schedCron" type="text" value="${escape(j.CronExpression||'')}" placeholder="0 */6 * * *" style="width:100%;padding:7px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-family:'Space Mono',monospace;font-size:12px">
+            </div>
+            <div>
+              <label style="display:block;margin-bottom:4px;color:var(--text-muted)">Timezone (IANA)</label>
+              <input id="schedTZ" type="text" value="${escape(j.TimezoneIANA||'America/Chicago')}" placeholder="America/Chicago" style="width:100%;padding:7px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:12px">
+            </div>
+            <div style="grid-column:1/3;display:flex;gap:8px;align-items:center;margin-top:4px">
+              <button class="btn btn-small" onclick="saveSchedule(${j.JobID})">Save schedule</button>
+              <span id="schedStatus" style="font-size:11px;color:var(--text-muted)"></span>
+            </div>
+            <div style="grid-column:1/3;color:var(--text-dim);font-size:11px">
+              Format: <code style="font-family:'Space Mono',monospace">minute hour day month weekday</code>. Use <code>*/N</code> for every-N, <code>0,30</code> for specific values. Changes apply live — scheduler reloads this job immediately after save.
+            </div>
+          </div>
+        </details>
 
         ${errorHTML}
         ${runsHTML}
@@ -624,6 +670,33 @@
         if (currentJobID) openDrawer(currentJobID);
       } catch (e) { alertError('Run failed: ' + e.message); }
     }
+    function applyPreset(val){
+      if (!val) return;
+      if (val === '__CLEAR__') {
+        document.getElementById('schedCron').value = '';
+      } else {
+        document.getElementById('schedCron').value = val;
+      }
+    }
+    async function saveSchedule(jobID){
+      const cron = document.getElementById('schedCron').value.trim();
+      const tz   = document.getElementById('schedTZ').value.trim() || 'America/Chicago';
+      const status = document.getElementById('schedStatus');
+      status.textContent = 'Saving…';
+      try {
+        await window._SKCAdmin.api('PATCH', '/api/jobs/' + jobID, {
+          cronExpression: cron || null,
+          timezoneIANA:   tz,
+        });
+        status.textContent = '✓ Saved — scheduler reloaded';
+        setTimeout(() => { status.textContent = ''; }, 3000);
+        await loadJobs();
+        if (currentJobID) openDrawer(currentJobID);
+      } catch (e) {
+        status.textContent = '✗ ' + e.message;
+      }
+    }
+
     async function pause(jobID){
       await window._SKCAdmin.api('POST', '/api/jobs/' + jobID + '/pause');
       await loadJobs();
