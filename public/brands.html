@@ -22,13 +22,27 @@
     </div>
     <div class="page-content">
       <div id="alertBox"></div>
+
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:14px">
+        <label style="margin:0;font-size:13px;color:var(--text-muted)">Show:</label>
+        <select id="categoryFilter" onchange="render()" style="padding:7px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px">
+          <option value="ACTIVE_ONLY" selected>Active only (default)</option>
+          <option value="ACTIVE_LEGACY">Active + Legacy</option>
+          <option value="LEGACY">Legacy only</option>
+          <option value="HIDDEN">Hidden only</option>
+          <option value="TEST">Test only</option>
+          <option value="ALL">All categories</option>
+        </select>
+        <span id="brandCount" style="color:var(--text-muted);font-size:12px"></span>
+      </div>
+
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Brand</th><th>Slug</th><th>BrandUID</th><th>Credentials</th><th>Status</th><th></th></tr>
+            <tr><th>Brand</th><th>Slug</th><th>BrandUID</th><th>Credentials</th><th>Status</th><th>Category</th><th></th></tr>
           </thead>
           <tbody id="tbody">
-            <tr><td colspan="6" class="empty-state">Loading…</td></tr>
+            <tr><td colspan="7" class="empty-state">Loading…</td></tr>
           </tbody>
         </table>
       </div>
@@ -99,6 +113,15 @@
         <textarea id="fDataDbConnString" placeholder='{"server":"...","database":"...","user":"...","password":"..."}'></textarea>
         <div class="help-text">Cached from skc-auth-dev.SKC_Brands.ProdSqlServerConn. Leave blank to sync later.</div>
 
+        <label>Category</label>
+        <select id="fCategory" style="padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface);color:var(--text);font-size:13px;width:100%">
+          <option value="Active">Active — visible by default</option>
+          <option value="Legacy">Legacy — hidden by default</option>
+          <option value="Hidden">Hidden — never shown without "All"</option>
+          <option value="Test">Test — sandbox / dev brand</option>
+        </select>
+        <div class="help-text">Use Legacy or Hidden to clean up the default brands list without disabling the underlying data flows. Set IsActive=0 separately if you want to actually pause the scheduler for this brand.</div>
+
         <div class="modal-actions">
           <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
           <button type="submit" class="btn" id="submitBtn">Save</button>
@@ -122,19 +145,49 @@
     } catch (e) { alert('Load failed: ' + e.message); }
   }
 
+  function categoryBadge(cat) {
+    const map = {
+      Active: 'badge-green',
+      Legacy: 'badge-muted',
+      Hidden: 'badge-muted',
+      Test:   'badge-muted',
+    };
+    const cls = map[cat] || 'badge-muted';
+    return '<span class="badge ' + cls + '">' + esc(cat || 'Active') + '</span>';
+  }
+
+  function applyCategoryFilter(rows) {
+    const filter = document.getElementById('categoryFilter').value;
+    if (filter === 'ALL')           return rows;
+    if (filter === 'ACTIVE_ONLY')   return rows.filter(b => (b.Category || 'Active') === 'Active');
+    if (filter === 'ACTIVE_LEGACY') return rows.filter(b => (b.Category || 'Active') === 'Active' || b.Category === 'Legacy');
+    if (filter === 'LEGACY')        return rows.filter(b => b.Category === 'Legacy');
+    if (filter === 'HIDDEN')        return rows.filter(b => b.Category === 'Hidden');
+    if (filter === 'TEST')          return rows.filter(b => b.Category === 'Test');
+    return rows;
+  }
+
   function render() {
     const tbody = document.getElementById('tbody');
-    if (!brands.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No brands yet. Add one to attach credentials.</td></tr>';
+    const visible = applyCategoryFilter(brands);
+    document.getElementById('brandCount').textContent =
+      visible.length + ' of ' + brands.length + ' brands';
+
+    if (!visible.length) {
+      const reason = brands.length === 0
+        ? 'No brands yet. Add one to attach credentials.'
+        : 'No brands match the current filter. Switch to "All categories" to see them.';
+      tbody.innerHTML = '<tr><td colspan="7" class="empty-state">' + reason + '</td></tr>';
       return;
     }
-    tbody.innerHTML = brands.map(b => `
+    tbody.innerHTML = visible.map(b => `
       <tr>
         <td>${esc(b.BrandName)}</td>
         <td class="mono">${esc(b.BrandSlug)}</td>
         <td class="mono" style="font-size:11px;color:var(--text-muted)">${esc(b.BrandUID)}</td>
         <td class="mono">${b.CredentialCount}</td>
         <td>${b.IsActive ? '<span class="badge badge-green">Active</span>' : '<span class="badge badge-muted">Inactive</span>'}</td>
+        <td>${categoryBadge(b.Category)}</td>
         <td style="text-align:right">
           <a class="btn btn-small btn-secondary" href="/credentials.html?brandUID=${encodeURIComponent(b.BrandUID)}">Credentials</a>
           <button class="btn btn-small btn-secondary" onclick="openModal('${b.BrandUID}')">Edit</button>
@@ -156,11 +209,13 @@
         document.getElementById('fBrandUID').disabled = true;
         document.getElementById('fBrandName').value = b.BrandName;
         document.getElementById('fBrandSlug').value = b.BrandSlug;
+        document.getElementById('fCategory').value = b.Category || 'Active';
       }
     } else {
       document.getElementById('modalTitle').textContent = 'Add Brand';
       document.getElementById('fMode').value = 'create';
       document.getElementById('fBrandUID').disabled = false;
+      document.getElementById('fCategory').value = 'Active';
     }
     modal.classList.add('show');
   }
@@ -179,6 +234,7 @@
         brandName: document.getElementById('fBrandName').value.trim(),
         brandSlug: document.getElementById('fBrandSlug').value.trim().toLowerCase(),
         dataDbConnString: document.getElementById('fDataDbConnString').value || null,
+        category: document.getElementById('fCategory').value,
       };
       if (mode === 'edit') {
         await api('PUT', '/api/brands/' + uid, payload);

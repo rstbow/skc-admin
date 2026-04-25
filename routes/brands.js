@@ -11,12 +11,14 @@ router.get('/', async (_req, res) => {
   try {
     const pool = await getPool();
     const r = await pool.request().query(`
-      SELECT b.BrandUID, b.BrandName, b.BrandSlug, b.IsActive, b.SyncedAt,
+      SELECT b.BrandUID, b.BrandName, b.BrandSlug, b.IsActive, b.Category, b.SyncedAt,
              b.CreatedAt, b.UpdatedAt,
              (SELECT COUNT(*) FROM admin.BrandCredentials bc
               WHERE bc.BrandUID = b.BrandUID AND bc.IsActive = 1) AS CredentialCount
       FROM admin.Brands b
-      ORDER BY b.IsActive DESC, b.BrandName
+      ORDER BY
+        CASE b.Category WHEN 'Active' THEN 0 WHEN 'Test' THEN 1 WHEN 'Legacy' THEN 2 WHEN 'Hidden' THEN 3 ELSE 4 END,
+        b.IsActive DESC, b.BrandName
     `);
     res.json({ brands: r.recordset });
   } catch (e) {
@@ -91,20 +93,24 @@ router.put('/:uid', async (req, res) => {
   try {
     const b = req.body || {};
     const pool = await getPool();
+    const allowedCategories = new Set(['Active','Legacy','Hidden','Test']);
+    const category = allowedCategories.has(b.category) ? b.category : null;
     const r = await pool.request()
       .input('uid', sql.UniqueIdentifier, req.params.uid)
       .input('name', sql.NVarChar(200), b.brandName)
       .input('slug', sql.NVarChar(100), b.brandSlug?.toLowerCase())
       .input('conn', sql.NVarChar(sql.MAX), b.dataDbConnString || null)
       .input('isActive', sql.Bit, b.isActive == null ? 1 : (b.isActive ? 1 : 0))
+      .input('category', sql.NVarChar(20), category)
       .query(`
         UPDATE admin.Brands
         SET BrandName = @name,
             BrandSlug = @slug,
             DataDbConnString = @conn,
             IsActive = @isActive,
+            Category = COALESCE(@category, Category),
             UpdatedAt = SYSUTCDATETIME()
-        OUTPUT INSERTED.BrandUID, INSERTED.BrandName
+        OUTPUT INSERTED.BrandUID, INSERTED.BrandName, INSERTED.Category
         WHERE BrandUID = @uid
       `);
     if (!r.recordset.length) return res.status(404).json({ error: 'Not found' });
