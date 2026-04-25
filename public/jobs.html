@@ -480,7 +480,7 @@
                 <div class="meta">${metaTxt}</div>
                 <div class="mode">${escape(j.ExecutionMode)}</div>
                 <div class="job-row-actions">
-                  <button class="btn-icon" title="Run now" onclick="event.stopPropagation();runNow(${j.JobID});">▶</button>
+                  <button class="btn-icon" title="Run now" data-runjob="${j.JobID}" onclick="event.stopPropagation();runNow(${j.JobID});">▶</button>
                 </div>
               </div>
             `;
@@ -592,7 +592,7 @@
 
       document.getElementById('drawerBody').innerHTML = `
         <div class="actions" style="margin-bottom:14px">
-          <button class="btn" onclick="runNow(${j.JobID})">▶ Run now</button>
+          <button class="btn" data-runjob="${j.JobID}" onclick="runNow(${j.JobID})">▶ Run now</button>
           ${j.IsActive
             ? '<button class="btn btn-secondary" onclick="pause(' + j.JobID + ')">⏸ Pause</button>'
             : '<button class="btn btn-secondary" onclick="resume(' + j.JobID + ')">▶ Resume</button>'}
@@ -654,7 +654,31 @@
     }
 
     /* ---------- Actions ---------- */
+    // Set of jobIDs currently in flight from the UI. Prevents a user
+    // who double-clicks (or panic-clicks during a long run) from
+    // queueing two requests to the same job. Server-side has its own
+    // rapid-fire guard as a backstop.
+    const inFlightFires = new Set();
+
+    function setRunButtonsDisabled(jobID, disabled) {
+      // Tag any Run-now button (icon in the row, button in the drawer)
+      // with data-runjob so we can flip them all when state changes.
+      document.querySelectorAll('[data-runjob="' + jobID + '"]').forEach((btn) => {
+        btn.disabled = disabled;
+        btn.style.opacity = disabled ? '0.5' : '';
+        btn.style.cursor = disabled ? 'not-allowed' : '';
+      });
+    }
+
     async function runNow(jobID){
+      if (inFlightFires.has(jobID)) {
+        // Second click while the first is still in flight — ignore.
+        // The visible button is already disabled; this is the safety
+        // net for keyboard / programmatic dupes.
+        return;
+      }
+      inFlightFires.add(jobID);
+      setRunButtonsDisabled(jobID, true);
       try {
         document.getElementById('alertBox').innerHTML =
           '<div class="alert" style="background:rgba(96,165,250,.14);color:var(--blue);border:1px solid rgba(96,165,250,.35);padding:8px 14px;border-radius:6px;margin-bottom:12px">Firing job ' + jobID + '…</div>';
@@ -668,7 +692,12 @@
         }
         await loadJobs();
         if (currentJobID) openDrawer(currentJobID);
-      } catch (e) { alertError('Run failed: ' + e.message); }
+      } catch (e) {
+        alertError('Run failed: ' + e.message);
+      } finally {
+        inFlightFires.delete(jobID);
+        setRunButtonsDisabled(jobID, false);
+      }
     }
     function applyPreset(val){
       if (!val) return;
