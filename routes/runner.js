@@ -12,6 +12,7 @@ const express = require('express');
 const { sql, getPool } = require('../config/db');
 const { verify } = require('../config/jwt');
 const { runAmazonFinancialEvents } = require('../lib/amazonFinancialEventsRunner');
+const { runBundle } = require('../lib/jobBundles');
 const scheduler = require('../lib/scheduler');
 
 const router = express.Router();
@@ -168,203 +169,152 @@ router.get('/runs', async (req, res) => {
      Body:    { brandUID, connector, fireInitial?, includeBackfill? }
      Returns: { created[], skipped[], initialFires[] }
 
-   Called by app2 right after a brand saves credentials for a connector.
-   Iterates admin.Endpoints WHERE AutoCreateOnNewBrand=1 + matching
-   connector, INSERTs admin.Jobs rows from each endpoint's defaults
-   (idempotent — no double-create), reloads the scheduler, and
-   optionally fires the initial loads so customers see data within
-   ~10 minutes of connecting.
+   Backwards-compatible wrapper around the new bundle engine. The actual
+   recipe (which endpoints to provision, fire order, delays, the BACKFILL
+   row) lives in admin.JobBundles + admin.JobBundleSteps — see migration
+   036_job_bundles.sql.
 
-   Special-case for AMZ_FINANCIAL_EVENTS: also creates a paused
-   BACKFILL row (daysBack=180) so the user can manually fire it later
-   for historical data.
+   The connector value selects the bundle name:
+     AMAZON_SP_API → 'amazon-onboarding'
+     SHOPIFY       → 'shopify-onboarding'   (when added)
+     WALMART       → 'walmart-onboarding'   (when added)
+     QBO           → 'quickbooks-onboarding' (when added)
 
-   Initial fires (async, fire-and-forget — don't block the HTTP response):
-     - AMZ_LISTINGS_READ           → fires NOW (~5-15 min report wait)
-     - AMZ_FINANCIAL_EVENTS INGEST → fires NOW (last 2 days, fast)
-     - AMZ_LISTING_RANK_SNAPSHOT   → fires 5 min later (needs ASINs)
-
-   App2 polls /api/jobs/:jobID every 30s to track progress.
+   Response shape preserved so app2 doesn't need to change. New
+   `bundleName` field added so callers can see which recipe ran.
    ============================================================ */
+
+const CONNECTOR_TO_BUNDLE = {
+  AMAZON_SP_API: 'amazon-onboarding',
+  SHOPIFY:       'shopify-onboarding',
+  WALMART:       'walmart-onboarding',
+  QBO:           'quickbooks-onboarding',
+};
 
 router.post('/onboard-brand-jobs', async (req, res) => {
   try {
     const { brandUID, connector, fireInitial = true, includeBackfill = true } = req.body || {};
-    if (!brandUID) return res.status(400).json({ error: 'brandUID is required' });
+    if (!brandUID)  return res.status(400).json({ error: 'brandUID is required' });
     if (!connector) return res.status(400).json({ error: 'connector is required (e.g. AMAZON_SP_API)' });
 
-    const pool = await getPool();
-
-    // 1. Verify brand exists + active
-    const brandR = await pool.request()
-      .input('uid', sql.UniqueIdentifier, brandUID)
-      .query(`SELECT BrandUID, BrandName FROM admin.Brands WHERE BrandUID = @uid AND IsActive = 1`);
-    if (!brandR.recordset.length) {
-      return res.status(404).json({ error: 'Brand not found or inactive — add the brand to admin.Brands first' });
-    }
-    const brand = brandR.recordset[0];
-
-    // 2. Verify there's an active credential for this brand+connector
-    const credR = await pool.request()
-      .input('uid', sql.UniqueIdentifier, brandUID)
-      .input('cn',  sql.NVarChar(50), connector)
-      .query(`
-        SELECT TOP 1 bc.CredentialID
-        FROM admin.BrandCredentials bc
-        JOIN admin.Connectors c ON c.ConnectorID = bc.ConnectorID
-        WHERE bc.BrandUID = @uid AND c.Name = @cn AND bc.IsActive = 1;
-      `);
-    if (!credR.recordset.length) {
+    const bundleName = CONNECTOR_TO_BUNDLE[connector];
+    if (!bundleName) {
       return res.status(400).json({
-        error: 'No active credential for this brand + connector — save credentials first, then call this hook.',
+        error: 'No onboarding bundle defined for connector ' + connector +
+               '. Add a row in admin.JobBundles + JobBundleSteps and map it here.',
       });
     }
 
-    // 3. Find all auto-create endpoints for this connector
-    const epR = await pool.request()
-      .input('cn', sql.NVarChar(50), connector)
-      .query(`
-        SELECT e.EndpointID, e.Name,
-               e.DefaultCronExpression, e.DefaultTimezoneIANA, e.DefaultParams,
-               e.DefaultExecutionMode, e.DefaultJobType, e.DefaultIsActive
-        FROM admin.Endpoints e
-        JOIN admin.Connectors c ON c.ConnectorID = e.ConnectorID
-        WHERE c.Name = @cn
-          AND e.AutoCreateOnNewBrand = 1
-          AND e.IsActive = 1
-        ORDER BY e.Name;
-      `);
-    if (!epR.recordset.length) {
-      return res.status(200).json({
-        brandUID, brandName: brand.BrandName, connector,
-        created: [], skipped: [], initialFires: [],
-        warning: 'No endpoints have AutoCreateOnNewBrand=1 for this connector. Set the flag in admin.Endpoints to enable auto-onboarding.',
-      });
-    }
-
-    const created = [];
-    const skipped = [];
-
-    for (const ep of epR.recordset) {
-      // Idempotency check — same (endpoint, brand, jobType) → skip
-      const dup = await pool.request()
-        .input('eid', sql.Int, ep.EndpointID)
-        .input('uid', sql.UniqueIdentifier, brandUID)
-        .input('jt',  sql.NVarChar(20), ep.DefaultJobType || 'INGEST')
-        .query(`SELECT TOP 1 JobID FROM admin.Jobs
-                WHERE EndpointID = @eid AND BrandUID = @uid AND JobType = @jt`);
-      if (dup.recordset.length) {
-        skipped.push({ endpoint: ep.Name, reason: 'already attached', jobID: dup.recordset[0].JobID });
-        continue;
-      }
-
-      const ck = ep.Name.toLowerCase().replace(/_/g, '-') + ':' + brandUID;
-      const ins = await pool.request()
-        .input('name', sql.NVarChar(100), ep.Name + ' · ' + brand.BrandName)
-        .input('eid',  sql.Int, ep.EndpointID)
-        .input('uid',  sql.UniqueIdentifier, brandUID)
-        .input('cron', sql.NVarChar(50), ep.DefaultCronExpression || null)
-        .input('tz',   sql.NVarChar(50), ep.DefaultTimezoneIANA || 'America/Chicago')
-        .input('mode', sql.NVarChar(20), ep.DefaultExecutionMode || 'NODE_NATIVE')
-        .input('jt',   sql.NVarChar(20), ep.DefaultJobType || 'INGEST')
-        .input('act',  sql.Bit, ep.DefaultIsActive ? 1 : 0)
-        .input('ck',   sql.NVarChar(100), ck)
-        .query(`
-          INSERT INTO admin.Jobs (Name, EndpointID, BrandUID, CronExpression, TimezoneIANA,
-                                  ExecutionMode, JobType, Params, IsActive, ConcurrencyKey, Priority)
-          OUTPUT INSERTED.JobID
-          VALUES (@name, @eid, @uid, @cron, @tz, @mode, @jt, NULL, @act, @ck, 50);
-        `);
-      created.push({
-        endpoint:    ep.Name,
-        jobID:       ins.recordset[0].JobID,
-        jobType:     ep.DefaultJobType || 'INGEST',
-      });
-    }
-
-    // 4. Backfill row for AMZ_FINANCIAL_EVENTS — paused, daysBack=180
-    if (includeBackfill) {
-      const finEp = epR.recordset.find((e) => e.Name === 'AMZ_FINANCIAL_EVENTS');
-      if (finEp) {
-        const bfDup = await pool.request()
-          .input('eid', sql.Int, finEp.EndpointID)
-          .input('uid', sql.UniqueIdentifier, brandUID)
-          .query(`SELECT TOP 1 JobID FROM admin.Jobs
-                  WHERE EndpointID = @eid AND BrandUID = @uid AND JobType = 'BACKFILL'`);
-        if (!bfDup.recordset.length) {
-          const bfIns = await pool.request()
-            .input('name', sql.NVarChar(100), 'AMZ_FINANCIAL_EVENTS · ' + brand.BrandName + ' · backfill 180d')
-            .input('eid',  sql.Int, finEp.EndpointID)
-            .input('uid',  sql.UniqueIdentifier, brandUID)
-            .input('par',  sql.NVarChar(sql.MAX), N(JSON.stringify({ daysBack: 180, chunkDays: 2, pageDelayMs: 3000 })))
-            .input('ck',   sql.NVarChar(100), 'amz-fin-events-backfill:' + brandUID)
-            .query(`
-              INSERT INTO admin.Jobs (Name, EndpointID, BrandUID, CronExpression, TimezoneIANA,
-                                      ExecutionMode, JobType, Params, IsActive, ConcurrencyKey, Priority)
-              OUTPUT INSERTED.JobID
-              VALUES (@name, @eid, @uid, NULL, 'America/Chicago', 'NODE_NATIVE', 'BACKFILL', @par, 0, @ck, 30);
-            `);
-          created.push({
-            endpoint: 'AMZ_FINANCIAL_EVENTS', jobID: bfIns.recordset[0].JobID, jobType: 'BACKFILL',
-            note: 'paused — user fires manually for 180-day historical pull',
-          });
-        } else {
-          skipped.push({ endpoint: 'AMZ_FINANCIAL_EVENTS', reason: 'backfill already attached', jobID: bfDup.recordset[0].JobID });
-        }
-      }
-    }
-
-    // 5. Reload scheduler so cron picks up new rows immediately
-    await scheduler.reload().catch((e) => console.error('[onboard] scheduler.reload failed', e.message));
-
-    // 6. Initial fires (async, fire-and-forget — don't block HTTP response)
-    const initialFires = [];
-    if (fireInitial) {
-      const listings = created.find((c) => c.endpoint === 'AMZ_LISTINGS_READ');
-      if (listings) {
-        scheduler.runNow(listings.jobID, { triggeredBy: 'MANUAL' })
-          .then(() => console.log('[onboard] initial AMZ_LISTINGS_READ fired for ' + brand.BrandName))
-          .catch((e) => console.error('[onboard] initial listings failed:', e.message));
-        initialFires.push({ endpoint: 'AMZ_LISTINGS_READ', jobID: listings.jobID, status: 'firing-async' });
-      }
-
-      const fin = created.find((c) => c.endpoint === 'AMZ_FINANCIAL_EVENTS' && c.jobType === 'INGEST');
-      if (fin) {
-        scheduler.runNow(fin.jobID, { triggeredBy: 'MANUAL' })
-          .then(() => console.log('[onboard] initial AMZ_FINANCIAL_EVENTS fired for ' + brand.BrandName))
-          .catch((e) => console.error('[onboard] initial fin events failed:', e.message));
-        initialFires.push({ endpoint: 'AMZ_FINANCIAL_EVENTS', jobID: fin.jobID, status: 'firing-async' });
-      }
-
-      const rank = created.find((c) => c.endpoint === 'AMZ_LISTING_RANK_SNAPSHOT');
-      if (rank) {
-        // Delay 5 min so the listings runner has time to populate raw.amz_listings
-        // — the rank runner reads ASINs from there.
-        setTimeout(() => {
-          scheduler.runNow(rank.jobID, { triggeredBy: 'MANUAL' })
-            .then(() => console.log('[onboard] delayed AMZ_LISTING_RANK_SNAPSHOT fired for ' + brand.BrandName))
-            .catch((e) => console.error('[onboard] delayed rank fire failed:', e.message));
-        }, 5 * 60 * 1000);
-        initialFires.push({ endpoint: 'AMZ_LISTING_RANK_SNAPSHOT', jobID: rank.jobID, status: 'queued (5min delay)' });
-      }
-    }
-
-    res.status(201).json({
+    const result = await runBundle(bundleName, {
       brandUID,
-      brandName:    brand.BrandName,
+      triggeredBy: req.user.isServiceToken ? 'ONBOARD' : 'MANUAL',
+    });
+
+    // Map bundle result back to the legacy onboard-brand-jobs shape so
+    // app2 doesn't have to change. fireInitial=false means strip the
+    // "fired" output (still provisions). includeBackfill=false means
+    // strip PROVISION_BACKFILL steps' provisioned entries.
+    const created = result.provisioned.filter((p) => {
+      if (!includeBackfill && p.action === 'PROVISION_BACKFILL') return false;
+      return true;
+    }).map((p) => ({
+      endpoint: p.endpoint,
+      jobID: p.jobID,
+      jobType: p.jobType,
+      ...(p.action === 'PROVISION_BACKFILL'
+        ? { note: 'paused — user fires manually for historical pull' }
+        : {}),
+    }));
+
+    const initialFires = fireInitial ? result.fired : [];
+
+    return res.status(201).json({
+      brandUID,
+      brandName:    result.brandName,
       connector,
+      bundleName,
       created,
-      skipped,
+      skipped:      result.skipped,
       initialFires,
+      warnings:     result.warnings && result.warnings.length ? result.warnings : undefined,
       instructions: 'Poll /api/jobs/:jobID for status. Listings runner takes 5-15 min to populate raw.amz_listings; rank runner kicks off 5 min after.',
     });
   } catch (e) {
-    console.error('[runner/onboard]', e);
-    res.status(500).json({ error: e.message });
+    const status = e.status && e.status >= 400 && e.status < 600 ? e.status : 500;
+    if (status === 500) console.error('[runner/onboard]', e);
+    res.status(status).json({ error: e.message });
   }
 });
 
-// Helper to ensure NVARCHAR-prefix on JSON params
-function N(s) { return s; }
+/* ============================================================
+   POST /api/runner/fire-job — fire one job by name for app2.
+
+     Headers: X-Service-Token  OR  Authorization: Bearer
+     Body:    { brandUID, endpointName, params?, triggeredBy? }
+     Returns: { jobID, runID, status, brand, endpoint }
+
+   Lets app2 trigger a single endpoint pull without knowing the JobID.
+   We resolve (brand, endpoint) → JobID, then call scheduler.runNow.
+
+   If the job doesn't exist yet, returns 404 with a hint to call
+   /onboard-brand-jobs first (which provisions everything via bundle).
+   Optionally we could auto-provision here, but keeping it strict
+   prevents typos from silently spawning jobs.
+   ============================================================ */
+
+router.post('/fire-job', async (req, res) => {
+  try {
+    const { brandUID, endpointName, jobType, triggeredBy } = req.body || {};
+    if (!brandUID)     return res.status(400).json({ error: 'brandUID is required' });
+    if (!endpointName) return res.status(400).json({ error: 'endpointName is required (e.g. AMZ_ORDERS)' });
+
+    const wantedType = jobType || 'INGEST';
+
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('uid', sql.UniqueIdentifier, brandUID)
+      .input('en',  sql.NVarChar(100), endpointName)
+      .input('jt',  sql.NVarChar(20), wantedType)
+      .query(`
+        SELECT TOP 1 j.JobID, j.IsActive, j.JobType, b.BrandName, e.Name AS EndpointName
+        FROM admin.Jobs j
+        JOIN admin.Endpoints e ON e.EndpointID = j.EndpointID
+        JOIN admin.Brands    b ON b.BrandUID   = j.BrandUID
+        WHERE j.BrandUID = @uid
+          AND e.Name = @en
+          AND j.JobType = @jt
+        ORDER BY j.JobID ASC;
+      `);
+    if (!r.recordset.length) {
+      return res.status(404).json({
+        error: 'No ' + wantedType + ' job found for brand + endpoint. Call POST /api/runner/onboard-brand-jobs to provision, or check the endpoint name.',
+      });
+    }
+    const job = r.recordset[0];
+
+    const trigger = triggeredBy
+      || (req.user.isServiceToken ? 'SCHEDULE' : 'MANUAL');
+
+    // scheduler.runNow returns { runID } — we resolve it sync so we can
+    // give app2 a runID to poll. The actual runner runs async.
+    const runResult = await scheduler.runNow(job.JobID, {
+      triggeredBy: trigger,
+      userID: req.user.userID || null,
+    });
+
+    return res.status(202).json({
+      jobID: job.JobID,
+      runID: (runResult && runResult.runID) || null,
+      status: 'firing-async',
+      brand: job.BrandName,
+      endpoint: job.EndpointName,
+      jobType: job.JobType,
+      hint: 'Poll GET /api/runs?brandUID=...&endpointName=... for status.',
+    });
+  } catch (e) {
+    console.error('[runner/fire-job]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 module.exports = router;
