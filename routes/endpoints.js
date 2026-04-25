@@ -20,6 +20,9 @@ router.get('/', async (req, res) => {
       SELECT e.EndpointID, e.EndpointUID, e.Name, e.DisplayName, e.Description,
              e.EndpointType, e.HttpMethod, e.Path, e.TargetSchema, e.TargetTable,
              e.NaturalKeyColumns, e.RateLimitWeight, e.Version, e.IsActive,
+             e.DefaultCronExpression, e.DefaultTimezoneIANA, e.DefaultParams,
+             e.DefaultExecutionMode, e.DefaultJobType, e.DefaultIsActive,
+             e.AutoCreateOnNewBrand,
              e.CreatedAt, e.UpdatedAt,
              c.ConnectorUID, c.Name AS ConnectorName, c.DisplayName AS ConnectorDisplay
       FROM admin.Endpoints e
@@ -191,6 +194,70 @@ router.put('/:uid', async (req, res) => {
     res.status(500).json({ error: 'Failed to update endpoint' });
   }
 });
+
+/* ---------- PATCH /api/endpoints/:uid/defaults — update profile defaults ----------
+   Used by the endpoint-first Jobs page to edit the cron / params / autoCreate
+   flag without touching the rest of the endpoint row.
+
+   Body fields are all optional — only what's provided is updated:
+     defaultCronExpression, defaultTimezoneIANA, defaultParams,
+     defaultExecutionMode, defaultJobType, defaultIsActive,
+     autoCreateOnNewBrand
+*/
+router.patch('/:uid/defaults', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const pool = await getPool();
+    const allowedExec = new Set(['SSIS_NATIVE','SSIS_CALLS_NODE','NODE_NATIVE']);
+    if (b.defaultExecutionMode != null && !allowedExec.has(b.defaultExecutionMode)) {
+      return res.status(400).json({ error: 'Invalid defaultExecutionMode' });
+    }
+    const r = await pool.request()
+      .input('uid',  sql.UniqueIdentifier, req.params.uid)
+      .input('cron', sql.NVarChar(50),     b.defaultCronExpression !== undefined ? (b.defaultCronExpression || null) : null)
+      .input('tz',   sql.NVarChar(50),     b.defaultTimezoneIANA   || null)
+      .input('par',  sql.NVarChar(sql.MAX),b.defaultParams !== undefined ? (b.defaultParams || null) : null)
+      .input('mode', sql.NVarChar(20),     b.defaultExecutionMode  || null)
+      .input('jt',   sql.NVarChar(20),     b.defaultJobType        || null)
+      .input('act',  sql.Bit,              b.defaultIsActive == null ? null : (b.defaultIsActive ? 1 : 0))
+      .input('auto', sql.Bit,              b.autoCreateOnNewBrand == null ? null : (b.autoCreateOnNewBrand ? 1 : 0))
+      .input('cronProvided', sql.Bit, b.defaultCronExpression !== undefined ? 1 : 0)
+      .input('parProvided',  sql.Bit, b.defaultParams !== undefined ? 1 : 0)
+      .query(`
+        UPDATE admin.Endpoints
+        SET DefaultCronExpression = CASE WHEN @cronProvided = 1 THEN @cron ELSE DefaultCronExpression END,
+            DefaultTimezoneIANA   = ISNULL(@tz, DefaultTimezoneIANA),
+            DefaultParams         = CASE WHEN @parProvided = 1 THEN @par ELSE DefaultParams END,
+            DefaultExecutionMode  = ISNULL(@mode, DefaultExecutionMode),
+            DefaultJobType        = ISNULL(@jt, DefaultJobType),
+            DefaultIsActive       = ISNULL(@act, DefaultIsActive),
+            AutoCreateOnNewBrand  = ISNULL(@auto, AutoCreateOnNewBrand),
+            UpdatedAt             = SYSUTCDATETIME()
+        OUTPUT INSERTED.EndpointUID, INSERTED.Name,
+               INSERTED.DefaultCronExpression, INSERTED.DefaultTimezoneIANA,
+               INSERTED.DefaultParams, INSERTED.DefaultExecutionMode,
+               INSERTED.DefaultJobType, INSERTED.DefaultIsActive,
+               INSERTED.AutoCreateOnNewBrand
+        WHERE EndpointUID = @uid;
+      `);
+    if (!r.recordset.length) return res.status(404).json({ error: 'Not found' });
+
+    await logAction({
+      userID: req.user.userID,
+      action: 'ENDPOINT_DEFAULTS_UPDATE',
+      entityType: 'Endpoint',
+      entityID: req.params.uid,
+      details: b,
+      ...reqMeta(req),
+    });
+
+    res.json({ endpoint: r.recordset[0] });
+  } catch (e) {
+    console.error('[endpoints/patch-defaults]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 
 /* ---------- DELETE /api/endpoints/:uid (soft) ---------- */
 router.delete('/:uid', async (req, res) => {

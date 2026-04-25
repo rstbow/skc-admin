@@ -288,6 +288,139 @@ router.get('/scheduler/status', (_req, res) => {
   });
 });
 
+/* ============================================================
+   Endpoint-first views — Phase 2 of the endpoint-as-profile work.
+   The Jobs page now renders endpoints as the top-level entity, with
+   their attached brand jobs nested. Defaults editor + auto-create
+   flag live on the endpoint, brand jobs inherit + override.
+   ============================================================ */
+
+/* GET /api/jobs/by-endpoint — endpoints with their attached brand jobs */
+router.get('/by-endpoint', async (_req, res) => {
+  try {
+    const pool = await getPool();
+    const epRes = await pool.request().query(`
+      SELECT e.EndpointID, e.EndpointUID, e.Name AS EndpointName, e.DisplayName AS EndpointDisplay,
+             e.IsActive AS EndpointIsActive,
+             e.DefaultCronExpression, e.DefaultTimezoneIANA, e.DefaultParams,
+             e.DefaultExecutionMode, e.DefaultJobType, e.DefaultIsActive,
+             e.AutoCreateOnNewBrand,
+             c.Name AS ConnectorName, c.DisplayName AS ConnectorDisplay,
+             c.ConnectorUID
+      FROM admin.Endpoints e
+      JOIN admin.Connectors c ON c.ConnectorID = e.ConnectorID
+      ORDER BY c.DisplayName, e.IsActive DESC, e.Name;
+    `);
+
+    const jobsRes = await pool.request().query(`
+      SELECT j.JobID, j.JobUID, j.Name AS JobName, j.EndpointID,
+             j.CronExpression, j.TimezoneIANA, j.Params,
+             j.IsActive, j.ExecutionMode, j.JobType, j.Priority,
+             j.LastRunAt, j.LastRunStatus, j.NextRunAt,
+             j.LastErrorMessage, j.ConsecutiveFailures,
+             j.BrandUID, b.BrandName,
+             (SELECT COUNT(*) FROM admin.JobRuns jr3
+               WHERE jr3.JobID = j.JobID AND jr3.Status = 'RUNNING'
+                 AND jr3.StartedAt > DATEADD(HOUR, -1, SYSUTCDATETIME())) AS InFlight,
+             (SELECT TOP 1 jr2.DurationMs FROM admin.JobRuns jr2
+               WHERE jr2.JobID = j.JobID AND jr2.Status = 'SUCCESS'
+               ORDER BY jr2.StartedAt DESC) AS LastSuccessDurationMs
+      FROM admin.Jobs j
+      LEFT JOIN admin.Brands b ON b.BrandUID = j.BrandUID
+      ORDER BY b.BrandName;
+    `);
+
+    // Group jobs by endpoint
+    const byEndpoint = new Map();
+    for (const ep of epRes.recordset) byEndpoint.set(ep.EndpointID, { endpoint: ep, jobs: [] });
+    for (const j of jobsRes.recordset) {
+      const slot = byEndpoint.get(j.EndpointID);
+      if (slot) slot.jobs.push(j);
+    }
+
+    res.json({ groups: Array.from(byEndpoint.values()) });
+  } catch (e) {
+    console.error('[jobs/by-endpoint]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+/* POST /api/endpoints/:endpointID/attach-brand
+   Body: { brandUID, overrideParams? }
+   Creates an admin.Jobs row from the endpoint's defaults. Caller can
+   override cron/params via the row later via PATCH /api/jobs/:id. */
+router.post('/endpoints/:endpointID(\\d+)/attach-brand', async (req, res) => {
+  try {
+    const endpointID = parseInt(req.params.endpointID, 10);
+    const { brandUID, overrideParams } = req.body || {};
+    if (!brandUID) return res.status(400).json({ error: 'brandUID is required' });
+
+    const pool = await getPool();
+    const epR = await pool.request()
+      .input('eid', sql.Int, endpointID)
+      .query(`
+        SELECT e.EndpointID, e.Name AS EndpointName,
+               e.DefaultCronExpression, e.DefaultTimezoneIANA, e.DefaultParams,
+               e.DefaultExecutionMode, e.DefaultJobType, e.DefaultIsActive
+        FROM admin.Endpoints e WHERE e.EndpointID = @eid;
+      `);
+    if (!epR.recordset.length) return res.status(404).json({ error: 'Endpoint not found' });
+    const ep = epR.recordset[0];
+
+    // Dedupe: don't double-create
+    const existing = await pool.request()
+      .input('eid', sql.Int, endpointID)
+      .input('uid', sql.UniqueIdentifier, brandUID)
+      .query(`SELECT TOP 1 JobID FROM admin.Jobs WHERE EndpointID = @eid AND BrandUID = @uid AND JobType = @jt`);
+    // Add @jt parameter for query
+    const dedupeR = await pool.request()
+      .input('eid', sql.Int, endpointID)
+      .input('uid', sql.UniqueIdentifier, brandUID)
+      .input('jt',  sql.NVarChar(20), ep.DefaultJobType || 'INGEST')
+      .query(`SELECT TOP 1 JobID FROM admin.Jobs WHERE EndpointID = @eid AND BrandUID = @uid AND JobType = @jt`);
+    if (dedupeR.recordset.length) {
+      return res.status(409).json({ error: 'Brand already attached to this endpoint',
+                                    existingJobID: dedupeR.recordset[0].JobID });
+    }
+
+    const brandR = await pool.request()
+      .input('uid', sql.UniqueIdentifier, brandUID)
+      .query(`SELECT BrandName FROM admin.Brands WHERE BrandUID = @uid`);
+    const brandName = brandR.recordset[0]?.BrandName || brandUID;
+
+    const params = overrideParams !== undefined
+      ? (overrideParams && JSON.stringify(overrideParams) !== '{}' ? JSON.stringify(overrideParams) : null)
+      : null; // null = inherit from endpoint default
+
+    const ins = await pool.request()
+      .input('name', sql.NVarChar(100), ep.EndpointName + ' · ' + brandName)
+      .input('eid',  sql.Int, endpointID)
+      .input('uid',  sql.UniqueIdentifier, brandUID)
+      .input('cron', sql.NVarChar(50), ep.DefaultCronExpression || null)
+      .input('tz',   sql.NVarChar(50), ep.DefaultTimezoneIANA || 'America/Chicago')
+      .input('mode', sql.NVarChar(20), ep.DefaultExecutionMode || 'NODE_NATIVE')
+      .input('jt',   sql.NVarChar(20), ep.DefaultJobType || 'INGEST')
+      .input('par',  sql.NVarChar(sql.MAX), params)
+      .input('act',  sql.Bit, ep.DefaultIsActive ? 1 : 0)
+      .input('ck',   sql.NVarChar(100), ep.EndpointName.toLowerCase().replace(/_/g,'-')
+                                          + ':' + brandUID)
+      .query(`
+        INSERT INTO admin.Jobs (Name, EndpointID, BrandUID, CronExpression, TimezoneIANA,
+                                ExecutionMode, JobType, Params, IsActive, ConcurrencyKey, Priority)
+        OUTPUT INSERTED.JobID
+        VALUES (@name, @eid, @uid, @cron, @tz, @mode, @jt, @par, @act, @ck, 50);
+      `);
+    const jobID = ins.recordset[0].JobID;
+    await scheduler.reload(jobID).catch((e) =>
+      console.error('[attach-brand] reload failed:', e.message));
+
+    res.status(201).json({ jobID, brandName, endpointName: ep.EndpointName });
+  } catch (e) {
+    console.error('[attach-brand]', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 /* ---------- RUNBOOKS ---------- */
 router.get('/runbooks', async (_req, res) => {
   try {

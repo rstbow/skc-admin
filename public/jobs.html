@@ -113,6 +113,32 @@
   .empty{text-align:center;padding:30px 20px;color:var(--text-muted);font-size:13px}
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .btn-small{padding:6px 10px;font-size:12px}
+
+  /* Endpoint cards (Phase 2 endpoint-first view) */
+  .ep-card{padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center}
+  .ep-card:hover{background:var(--surface2)}
+  .ep-card:last-child{border-bottom:none}
+  .ep-card-title{font-size:14px;font-weight:600;color:var(--text)}
+  .ep-card-sub{font-size:12px;color:var(--text-muted);margin-top:3px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .ep-card-sub code{font-family:'Space Mono',monospace;font-size:11px;color:var(--text-dim);background:var(--surface2);padding:1px 6px;border-radius:3px}
+  .ep-card-pills{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
+
+  /* Brand row inside endpoint drawer */
+  .ep-brand-row{display:grid;grid-template-columns:12px 1fr 1fr 70px;gap:12px;padding:10px 0;border-top:1px solid var(--border);cursor:pointer;align-items:center;font-size:13px}
+  .ep-brand-row:first-child{border-top:none}
+  .ep-brand-row:hover{background:var(--surface2)}
+  .ep-brand-row .name{font-weight:500;color:var(--text)}
+  .ep-brand-row .meta{color:var(--text-muted);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+  /* Defaults box inside endpoint drawer */
+  .ep-defaults{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:12px 14px;margin-bottom:14px}
+  .ep-defaults-row{display:grid;grid-template-columns:140px 1fr;gap:8px;padding:5px 0;font-size:12px}
+  .ep-defaults-row .k{color:var(--text-muted)}
+  .ep-defaults-row .v{color:var(--text);font-family:'Space Mono',monospace;font-size:11px;word-break:break-all}
+
+  /* Drawer breadcrumb when drilling brand → endpoint */
+  .drawer-back{display:inline-block;font-size:11px;color:var(--text-muted);cursor:pointer;margin-bottom:8px;text-decoration:none}
+  .drawer-back:hover{color:var(--orange)}
 </style>
 </head>
 <body data-page="jobs">
@@ -142,25 +168,49 @@
         <div id="inflightList"><div class="empty" style="padding:14px">No jobs currently running</div></div>
       </div>
 
-      <!-- Tree -->
-      <div class="card">
-        <div class="toolbar">
-          <input id="searchInput" type="search" placeholder="Search brand, endpoint, or connector…" oninput="renderTree()">
-          <select id="filterStatus" onchange="renderTree()">
-            <option value="">All statuses</option>
-            <option value="RUNNING">Running</option>
-            <option value="FAILED">Failed</option>
-            <option value="SUCCESS">OK</option>
-            <option value="NEW">Never run</option>
-            <option value="PAUSED">Paused</option>
-          </select>
-          <label><input type="checkbox" id="showPaused" onchange="renderTree()"> Show paused</label>
-          <span style="flex:1"></span>
-          <button class="btn btn-secondary btn-small" onclick="expandAll(true)">Expand all</button>
-          <button class="btn btn-secondary btn-small" onclick="expandAll(false)">Collapse all</button>
-          <span id="jobCount" style="color:var(--text-muted);font-size:12px;margin-left:8px"></span>
+      <!-- View toggle -->
+      <div class="card" style="padding:8px 14px;margin-bottom:14px;display:flex;gap:8px;align-items:center">
+        <span style="font-size:12px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:0.05em">View:</span>
+        <button id="viewToggleEndpoint" class="btn btn-small" onclick="setView('endpoint')">📂 By endpoint</button>
+        <button id="viewToggleBrand" class="btn btn-small btn-secondary" onclick="setView('brand')">📋 By brand</button>
+        <span style="flex:1"></span>
+        <span id="viewHint" style="color:var(--text-dim);font-size:11px"></span>
+      </div>
+
+      <!-- Endpoint-first view (default) -->
+      <div id="endpointView">
+        <div class="card">
+          <div class="toolbar">
+            <input id="endpointSearchInput" type="search" placeholder="Search endpoints…" oninput="renderEndpoints()">
+            <label><input type="checkbox" id="endpointShowInactive" onchange="renderEndpoints()"> Include inactive endpoints</label>
+            <span style="flex:1"></span>
+            <span id="endpointCount" style="color:var(--text-muted);font-size:12px"></span>
+          </div>
+          <div id="endpointContainer"></div>
         </div>
-        <div id="treeContainer"></div>
+      </div>
+
+      <!-- Tree (by-brand legacy view) -->
+      <div id="brandView" style="display:none">
+        <div class="card">
+          <div class="toolbar">
+            <input id="searchInput" type="search" placeholder="Search brand, endpoint, or connector…" oninput="renderTree()">
+            <select id="filterStatus" onchange="renderTree()">
+              <option value="">All statuses</option>
+              <option value="RUNNING">Running</option>
+              <option value="FAILED">Failed</option>
+              <option value="SUCCESS">OK</option>
+              <option value="NEW">Never run</option>
+              <option value="PAUSED">Paused</option>
+            </select>
+            <label><input type="checkbox" id="showPaused" onchange="renderTree()"> Show paused</label>
+            <span style="flex:1"></span>
+            <button class="btn btn-secondary btn-small" onclick="expandAll(true)">Expand all</button>
+            <button class="btn btn-secondary btn-small" onclick="expandAll(false)">Collapse all</button>
+            <span id="jobCount" style="color:var(--text-muted);font-size:12px;margin-left:8px"></span>
+          </div>
+          <div id="treeContainer"></div>
+        </div>
       </div>
     </div>
   </main>
@@ -181,8 +231,12 @@
   <script src="/sidebar.js"></script>
   <script>
     let jobsCache = [];
+    let endpointGroupsCache = [];
     let currentJobID = null;
+    let currentEndpointID = null;       // when set, drawer shows endpoint detail
+    let drawerStack = [];               // ['endpoint', endpointID] etc. for back-nav
     let pollTimer = null;
+    let currentView = 'endpoint';       // 'endpoint' (default) | 'brand'
 
     /* ---------- Formatters ---------- */
     const fmt = {
@@ -272,7 +326,175 @@
 
     /* ---------- Data load ---------- */
     async function loadAll(){
-      await Promise.all([ loadScheduler(), loadJobs() ]);
+      await Promise.all([ loadScheduler(), loadJobs(), loadEndpointGroups() ]);
+    }
+
+    async function loadEndpointGroups(){
+      try {
+        const d = await window._SKCAdmin.api('GET', '/api/jobs/by-endpoint');
+        endpointGroupsCache = d.groups || [];
+        renderEndpoints();
+      } catch (e) {
+        document.getElementById('endpointContainer').innerHTML =
+          '<div class="empty">Failed to load endpoint view: ' + escape(e.message) + '</div>';
+      }
+    }
+
+    function setView(v){
+      currentView = v;
+      document.getElementById('endpointView').style.display = v === 'endpoint' ? '' : 'none';
+      document.getElementById('brandView').style.display    = v === 'brand'    ? '' : 'none';
+      // Toggle button styling
+      document.getElementById('viewToggleEndpoint').classList.toggle('btn-secondary', v !== 'endpoint');
+      document.getElementById('viewToggleBrand').classList.toggle('btn-secondary',    v !== 'brand');
+      try { localStorage.setItem('jobs.view', v); } catch (_) {}
+      document.getElementById('viewHint').textContent = v === 'endpoint'
+        ? 'Endpoints are profiles — defaults at the top, brands inherit. Click any endpoint for the brand list.'
+        : 'Brands grouped under each endpoint. Click any brand row for run history.';
+    }
+
+    /* ---------- Endpoint cards ---------- */
+    function renderEndpoints(){
+      const search = (document.getElementById('endpointSearchInput')?.value || '').toLowerCase().trim();
+      const showInactive = document.getElementById('endpointShowInactive')?.checked;
+      const host = document.getElementById('endpointContainer');
+
+      const visible = endpointGroupsCache.filter(g => {
+        if (!showInactive && !g.endpoint.EndpointIsActive) return false;
+        if (search) {
+          const hay = (g.endpoint.EndpointName + ' ' + g.endpoint.EndpointDisplay + ' ' +
+                       g.endpoint.ConnectorDisplay).toLowerCase();
+          if (!hay.includes(search)) return false;
+        }
+        return true;
+      });
+      document.getElementById('endpointCount').textContent = visible.length + ' of ' + endpointGroupsCache.length + ' endpoints';
+
+      if (!visible.length) {
+        host.innerHTML = '<div class="empty">No endpoints match the current filter.</div>';
+        return;
+      }
+
+      host.innerHTML = visible.map(g => {
+        const ep = g.endpoint;
+        const counts = { ok:0, fail:0, running:0, paused:0, neverRun:0 };
+        for (const j of g.jobs) {
+          const s = jobStatusFromGroup(j);
+          if (s === 'RUNNING') counts.running++;
+          else if (s === 'FAILED') counts.fail++;
+          else if (s === 'SUCCESS') counts.ok++;
+          else if (s === 'PAUSED') counts.paused++;
+          else counts.neverRun++;
+        }
+        const pills = [
+          counts.running  ? `<span class="stats-pill warn">${counts.running} running</span>` : '',
+          counts.fail     ? `<span class="stats-pill fail">${counts.fail} failing</span>` : '',
+          counts.ok       ? `<span class="stats-pill ok">${counts.ok} ok</span>` : '',
+          counts.paused   ? `<span class="stats-pill">${counts.paused} paused</span>` : '',
+          counts.neverRun ? `<span class="stats-pill">${counts.neverRun} new</span>` : '',
+        ].filter(Boolean).join(' ');
+
+        const cron = ep.DefaultCronExpression ? fmt.cron(ep.DefaultCronExpression) : 'manual';
+        const autoChip = ep.AutoCreateOnNewBrand
+          ? '<span class="stats-pill ok" title="Auto-create on new brand onboarding">⚡ auto-create</span>'
+          : '';
+        const inactiveChip = !ep.EndpointIsActive ? '<span class="stats-pill">inactive</span>' : '';
+
+        return `
+          <div class="ep-card" onclick="openEndpointDrawer(${ep.EndpointID})">
+            <div>
+              <div class="ep-card-title">${escape(ep.EndpointName)} <span style="color:var(--text-muted);font-weight:400">· ${escape(ep.EndpointDisplay || ep.EndpointName)}</span></div>
+              <div class="ep-card-sub">
+                <span>${escape(ep.ConnectorDisplay || ep.ConnectorName)}</span>
+                <span style="color:var(--text-dim)">·</span>
+                <code title="${escape(ep.DefaultCronExpression || 'manual')}">${escape(cron)}</code>
+                <span style="color:var(--text-dim)">·</span>
+                <span>${g.jobs.length} brand${g.jobs.length === 1 ? '' : 's'}</span>
+                ${autoChip ? '<span style="color:var(--text-dim)">·</span>' + autoChip : ''}
+                ${inactiveChip ? '<span style="color:var(--text-dim)">·</span>' + inactiveChip : ''}
+              </div>
+            </div>
+            <div class="ep-card-pills">${pills || '<span class="stats-pill">no brands</span>'}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function jobStatusFromGroup(j) {
+      if (j.InFlight > 0) return 'RUNNING';
+      if (!j.IsActive) return 'PAUSED';
+      if (j.LastRunStatus === 'FAILED') return 'FAILED';
+      if (j.LastRunStatus === 'SUCCESS') return 'SUCCESS';
+      return 'NEW';
+    }
+
+    /* ---------- Endpoint drawer ---------- */
+    async function openEndpointDrawer(endpointID){
+      currentEndpointID = endpointID;
+      currentJobID = null;
+      drawerStack = [];
+      const group = endpointGroupsCache.find(g => g.endpoint.EndpointID === endpointID);
+      if (!group) return;
+      const ep = group.endpoint;
+      document.getElementById('drawer').classList.add('open');
+      document.getElementById('drawerBackdrop').classList.add('open');
+      document.getElementById('drawerTitle').textContent = ep.EndpointName;
+      document.getElementById('drawerSub').innerHTML =
+        escape(ep.ConnectorDisplay) + ' · ' + escape(ep.EndpointDisplay || ep.EndpointName);
+
+      const params = ep.DefaultParams || '(none)';
+      const cron = ep.DefaultCronExpression || '(manual / no cron)';
+
+      const brandRowsHTML = group.jobs.length ? group.jobs.map(j => {
+        const status = jobStatusFromGroup(j);
+        const cls = status.toLowerCase();
+        const lastRun = j.LastRunAt ? fmt.rel(j.LastRunAt) : 'never';
+        const overrideTag = j.Params ? '<span style="color:var(--text-dim);font-size:10px;font-family:Space Mono,monospace">override</span>' : '';
+        const meta =
+          status === 'RUNNING' ? '<span style="color:var(--blue)">running…</span>' :
+          status === 'FAILED'  ? `<span class="err">✗ ${escape((j.LastErrorMessage||'error').slice(0,40))}</span>` :
+          status === 'SUCCESS' ? `✓ ${lastRun}` :
+          status === 'PAUSED'  ? 'paused' : 'never run';
+        return `
+          <div class="ep-brand-row" onclick="openBrandFromEndpoint(${j.JobID})">
+            <span class="status-dot ${cls}"></span>
+            <div class="name">${escape(j.BrandName || '—')} ${overrideTag}</div>
+            <div class="meta">${meta}</div>
+            <div style="text-align:right">
+              <button class="btn-icon" data-runjob="${j.JobID}" title="Run now"
+                      onclick="event.stopPropagation();runNow(${j.JobID})">▶</button>
+            </div>
+          </div>
+        `;
+      }).join('') : '<div class="empty" style="padding:14px">No brands attached yet.</div>';
+
+      document.getElementById('drawerBody').innerHTML = `
+        <h4 style="margin:0 0 8px 0;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Endpoint defaults (profile)</h4>
+        <div class="ep-defaults">
+          <div class="ep-defaults-row"><span class="k">Cron</span><span class="v">${escape(cron)} <span style="color:var(--text-dim)">${escape(fmt.cron(ep.DefaultCronExpression))}</span></span></div>
+          <div class="ep-defaults-row"><span class="k">Timezone</span><span class="v">${escape(ep.DefaultTimezoneIANA || 'America/Chicago')}</span></div>
+          <div class="ep-defaults-row"><span class="k">Params</span><span class="v">${escape(params)}</span></div>
+          <div class="ep-defaults-row"><span class="k">Execution mode</span><span class="v">${escape(ep.DefaultExecutionMode || 'NODE_NATIVE')}</span></div>
+          <div class="ep-defaults-row"><span class="k">Job type</span><span class="v">${escape(ep.DefaultJobType || 'INGEST')}</span></div>
+          <div class="ep-defaults-row"><span class="k">Default IsActive</span><span class="v">${ep.DefaultIsActive ? 'true' : 'false'}</span></div>
+          <div class="ep-defaults-row"><span class="k">Auto-create on new brand</span><span class="v">${ep.AutoCreateOnNewBrand ? '⚡ yes — app2 onboarding hook will provision this for new brands' : 'no'}</span></div>
+        </div>
+
+        <h4 style="margin:18px 0 8px 0;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Brands attached (${group.jobs.length})</h4>
+        ${brandRowsHTML}
+
+        <p style="color:var(--text-dim);font-size:11px;margin-top:14px">
+          Click a brand row for run history + per-brand actions. The ▶ button on the right runs the brand's job immediately.
+          <br><br>
+          <strong>Coming next:</strong> inline editor for endpoint defaults + "Add brand" button to attach more brands without SQL.
+        </p>
+      `;
+    }
+
+    function openBrandFromEndpoint(jobID){
+      // Push endpoint onto stack so drawer can offer a back link
+      if (currentEndpointID) drawerStack.push({ kind: 'endpoint', id: currentEndpointID });
+      openDrawer(jobID);
     }
     async function loadScheduler(){
       try {
@@ -539,6 +761,19 @@
       document.getElementById('drawer').classList.remove('open');
       document.getElementById('drawerBackdrop').classList.remove('open');
       currentJobID = null;
+      currentEndpointID = null;
+      drawerStack = [];
+    }
+
+    /* Pop drawer stack — used by the "← Back to endpoint" link in the
+       brand drawer to return to the endpoint detail without closing
+       the whole drawer. */
+    function popDrawerStack(){
+      const last = drawerStack.pop();
+      if (!last) return closeDrawer();
+      if (last.kind === 'endpoint') {
+        openEndpointDrawer(last.id);
+      }
     }
     function renderDrawer(d){
       const j = d.job;
@@ -590,7 +825,13 @@
         </div>
       ` : '<p style="color:var(--text-muted)">No runs yet.</p>';
 
+      // Back link if we drilled in from an endpoint drawer
+      const backLink = drawerStack.length
+        ? '<a class="drawer-back" href="javascript:void(0)" onclick="popDrawerStack()">← Back to ' + escape(j.EndpointName) + '</a>'
+        : '';
+
       document.getElementById('drawerBody').innerHTML = `
+        ${backLink}
         <div class="actions" style="margin-bottom:14px">
           <button class="btn" data-runjob="${j.JobID}" onclick="runNow(${j.JobID})">▶ Run now</button>
           ${j.IsActive
@@ -739,8 +980,17 @@
 
     /* ---------- Boot ---------- */
     document.addEventListener('sidebarReady', async () => {
+      // Restore saved view preference (defaults to endpoint).
+      let saved = 'endpoint';
+      try { saved = localStorage.getItem('jobs.view') || 'endpoint'; } catch (_) {}
+      setView(saved === 'brand' ? 'brand' : 'endpoint');
+
       await loadAll();
-      pollTimer = setInterval(loadJobs, 5000);
+      // Poll both views every 5s so live status stays fresh regardless of
+      // which view the user has open.
+      pollTimer = setInterval(async () => {
+        await Promise.all([ loadJobs(), loadEndpointGroups() ]);
+      }, 5000);
     });
   </script>
 </body>
