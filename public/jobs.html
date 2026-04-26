@@ -114,14 +114,58 @@
   .actions{display:flex;gap:8px;flex-wrap:wrap}
   .btn-small{padding:6px 10px;font-size:12px}
 
-  /* Endpoint cards (Phase 2 endpoint-first view) */
-  .ep-card{padding:14px 16px;border-bottom:1px solid var(--border);cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:14px;align-items:center}
-  .ep-card:hover{background:var(--surface2)}
+  /* ---- Connector source theming ----
+     Each card gets a 4px branded left border + a faint matching tint via
+     the --conn-color custom prop set on the section. Make.com-ish: you
+     can recognize an Amazon row at a glance even before reading. */
+  .conn-section{margin-bottom:16px}
+  .conn-section[data-connector="AMAZON_SP_API"]   { --conn-color: #ff9900; --conn-tint: rgba(255,153,0,.06) }
+  .conn-section[data-connector="SHOPIFY"]         { --conn-color: #95bf47; --conn-tint: rgba(149,191,71,.06) }
+  .conn-section[data-connector="WALMART"]         { --conn-color: #ffc220; --conn-tint: rgba(255,194,32,.06) }
+  .conn-section[data-connector="QBO"],
+  .conn-section[data-connector="QUICKBOOKS"]      { --conn-color: #2ca01c; --conn-tint: rgba(44,160,28,.06) }
+  .conn-section[data-connector="ETSY"]            { --conn-color: #f1641e; --conn-tint: rgba(241,100,30,.06) }
+  .conn-section[data-connector="EBAY"]            { --conn-color: #e53238; --conn-tint: rgba(229,50,56,.06) }
+  /* fallback (any unknown connector) */
+  .conn-section { --conn-color: var(--blue); --conn-tint: rgba(96,165,250,.06) }
+
+  .conn-header{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface2);border:1px solid var(--border);border-left:4px solid var(--conn-color);border-radius:8px 8px 0 0;cursor:pointer;user-select:none;font-size:13px;font-weight:600;color:var(--text)}
+  .conn-header:hover{background:var(--surface3)}
+  .conn-header .conn-icon{font-size:18px;line-height:1}
+  .conn-header .conn-name{flex:1}
+  .conn-header .conn-meta{color:var(--text-muted);font-weight:400;font-size:12px}
+  .conn-section.collapsed .conn-header{border-radius:8px}
+  .conn-section.collapsed .conn-body{display:none}
+  .conn-body{border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;background:var(--surface);overflow:hidden}
+
+  /* Endpoint cards (Phase 2 endpoint-first view) — themed via conn-section */
+  .ep-card{padding:14px 16px;border-bottom:1px solid var(--border);border-left:4px solid transparent;cursor:pointer;display:grid;grid-template-columns:auto 1fr auto;gap:14px;align-items:center;transition:background .12s,border-left-color .12s}
+  .ep-card:hover{background:var(--conn-tint);border-left-color:var(--conn-color)}
   .ep-card:last-child{border-bottom:none}
+  .ep-card-icon{font-size:20px;line-height:1;width:32px;height:32px;display:flex;align-items:center;justify-content:center;background:var(--conn-tint);border-radius:6px;border:1px solid var(--border)}
   .ep-card-title{font-size:14px;font-weight:600;color:var(--text)}
   .ep-card-sub{font-size:12px;color:var(--text-muted);margin-top:3px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
   .ep-card-sub code{font-family:'Space Mono',monospace;font-size:11px;color:var(--text-dim);background:var(--surface2);padding:1px 6px;border-radius:3px}
   .ep-card-pills{display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;align-items:center}
+
+  /* ---- Bundles strip (one-click recipes) ---- */
+  .bundles-strip{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+  .bundle-card{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--conn-color, var(--blue));border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;min-width:240px;cursor:pointer;transition:background .12s}
+  .bundle-card[data-connector="AMAZON_SP_API"]   { --conn-color: #ff9900 }
+  .bundle-card[data-connector="SHOPIFY"]         { --conn-color: #95bf47 }
+  .bundle-card[data-connector="WALMART"]         { --conn-color: #ffc220 }
+  .bundle-card[data-connector="QBO"],
+  .bundle-card[data-connector="QUICKBOOKS"]      { --conn-color: #2ca01c }
+  .bundle-card:hover{background:var(--surface2)}
+  .bundle-card .bundle-name{font-weight:600;font-size:13px;color:var(--text);display:flex;align-items:center;gap:6px}
+  .bundle-card .bundle-desc{font-size:11px;color:var(--text-muted);line-height:1.4}
+  .bundle-card .bundle-meta{font-size:11px;color:var(--text-dim);font-family:'Space Mono',monospace}
+
+  /* ---- Visual cron picker (drawer) ---- */
+  .cron-picker{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;padding:10px 0}
+  .cron-picker select,.cron-picker input{padding:6px 10px;border:1px solid var(--border-strong);border-radius:5px;background:var(--surface);color:var(--text);font-size:12px;font-family:inherit}
+  .cron-picker select:focus,.cron-picker input:focus{outline:none;border-color:var(--orange)}
+  .cron-picker .cron-preview{grid-column:1/-1;color:var(--text-dim);font-size:11px;font-family:'Space Mono',monospace;padding:6px 10px;background:var(--surface2);border-radius:5px;border:1px solid var(--border)}
 
   /* Brand row inside endpoint drawer */
   .ep-brand-row{display:grid;grid-template-columns:12px 1fr 1fr 70px;gap:12px;padding:10px 0;border-top:1px solid var(--border);cursor:pointer;align-items:center;font-size:13px}
@@ -155,6 +199,15 @@
     </div>
     <div class="page-content">
       <div id="alertBox"></div>
+
+      <!-- One-click bundles (recipes for provisioning + firing groups of jobs) -->
+      <div id="bundlesContainer" style="margin-bottom:14px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <span style="font-size:12px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:0.05em">Bundles</span>
+          <span style="color:var(--text-dim);font-size:11px">One-click recipes — provision + fire a group of jobs for a brand</span>
+        </div>
+        <div id="bundlesStrip" class="bundles-strip"></div>
+      </div>
 
       <!-- Per-connector summary chips -->
       <div id="summaryStrip" class="summary-strip"></div>
@@ -324,9 +377,147 @@
       return 'NEW';
     }
 
+    /* ---------- Connector branding ---------- */
+    const CONNECTOR_ICON = {
+      AMAZON_SP_API: '📦',
+      SHOPIFY:       '🛍️',
+      WALMART:       '🏪',
+      QBO:           '💰',
+      QUICKBOOKS:    '💰',
+      ETSY:          '🎨',
+      EBAY:          '🏷️',
+    };
+    const CONNECTOR_DEFAULT_ICON = '🔌';
+    function connIcon(name){ return CONNECTOR_ICON[name] || CONNECTOR_DEFAULT_ICON; }
+
     /* ---------- Data load ---------- */
     async function loadAll(){
-      await Promise.all([ loadScheduler(), loadJobs(), loadEndpointGroups() ]);
+      await Promise.all([ loadScheduler(), loadJobs(), loadEndpointGroups(), loadBundles() ]);
+    }
+
+    /* ---------- Bundles strip ---------- */
+    let bundlesCache = [];
+    async function loadBundles(){
+      try {
+        const d = await window._SKCAdmin.api('GET', '/api/bundles');
+        bundlesCache = d.bundles || [];
+        renderBundles();
+      } catch (e) {
+        // Silent — bundles is a non-critical surface, log to console
+        console.warn('[bundles] load failed:', e.message);
+        document.getElementById('bundlesContainer').style.display = 'none';
+      }
+    }
+    function renderBundles(){
+      const strip = document.getElementById('bundlesStrip');
+      if (!bundlesCache.length) {
+        document.getElementById('bundlesContainer').style.display = 'none';
+        return;
+      }
+      document.getElementById('bundlesContainer').style.display = '';
+      strip.innerHTML = bundlesCache.map(b => `
+        <div class="bundle-card" data-connector="${escape(b.ConnectorScope || '')}"
+             onclick="openBundleRunModal('${escapeAttr(b.Name)}')">
+          <div class="bundle-name">
+            <span>${connIcon(b.ConnectorScope)}</span>
+            <span>${escape(b.DisplayName || b.Name)}</span>
+          </div>
+          <div class="bundle-desc">${escape((b.Description || '').slice(0, 140))}${(b.Description||'').length > 140 ? '…' : ''}</div>
+          <div class="bundle-meta">${b.StepCount} step${b.StepCount === 1 ? '' : 's'} · ${escape(b.ConnectorScope || 'cross-connector')}</div>
+        </div>
+      `).join('');
+    }
+
+    /* ---------- Bundle run modal ---------- */
+    async function openBundleRunModal(bundleName){
+      // Pull a quick brand list to populate a picker. Use the existing
+      // /api/brands endpoint that the brands.html page uses.
+      let brands = [];
+      try {
+        const d = await window._SKCAdmin.api('GET', '/api/brands');
+        brands = (d.brands || []).filter(b => b.IsActive !== false);
+      } catch (e) {
+        alertError('Could not load brand list: ' + e.message);
+        return;
+      }
+
+      const bundle = bundlesCache.find(b => b.Name === bundleName);
+      if (!bundle) return;
+
+      const html = `
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:80;display:flex;align-items:center;justify-content:center" id="bundleModalBackdrop" onclick="closeBundleModal(event)">
+          <div style="background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:24px;width:min(520px,92vw);max-height:80vh;overflow-y:auto" onclick="event.stopPropagation()">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+              <div>
+                <h3 style="margin:0;color:var(--text);font-size:16px">${connIcon(bundle.ConnectorScope)} Run bundle</h3>
+                <div style="color:var(--text-muted);font-size:12px;margin-top:3px">${escape(bundle.DisplayName || bundle.Name)}</div>
+              </div>
+              <button class="drawer-close" onclick="closeBundleModal()">×</button>
+            </div>
+            <p style="color:var(--text-muted);font-size:12px;line-height:1.5;margin:0 0 14px">${escape(bundle.Description || '')}</p>
+            <label style="display:block;font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;font-weight:600;margin-bottom:6px">Brand</label>
+            <select id="bundleBrandSelect" style="width:100%;padding:8px 10px;border:1px solid var(--border-strong);border-radius:6px;background:var(--surface2);color:var(--text);font-size:13px;margin-bottom:12px">
+              <option value="">— select a brand —</option>
+              ${brands.map(b => `<option value="${escape(b.BrandUID)}">${escape(b.BrandName)}</option>`).join('')}
+            </select>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--text-muted);margin-bottom:12px">
+              <input type="checkbox" id="bundleDryRun"> Dry run — show plan without provisioning
+            </label>
+            <div style="display:flex;gap:8px;justify-content:flex-end">
+              <button class="btn btn-secondary" onclick="closeBundleModal()">Cancel</button>
+              <button class="btn" id="bundleRunBtn" onclick="executeBundleRun('${escapeAttr(bundle.Name)}')">Run bundle</button>
+            </div>
+            <div id="bundleResult" style="margin-top:14px"></div>
+          </div>
+        </div>
+      `;
+      const wrap = document.createElement('div');
+      wrap.innerHTML = html;
+      document.body.appendChild(wrap.firstElementChild);
+    }
+    function closeBundleModal(e){
+      if (e && e.target.id !== 'bundleModalBackdrop') return;
+      const m = document.getElementById('bundleModalBackdrop');
+      if (m) m.remove();
+    }
+    async function executeBundleRun(bundleName){
+      const brandUID = document.getElementById('bundleBrandSelect').value;
+      const dryRun = document.getElementById('bundleDryRun').checked;
+      const result = document.getElementById('bundleResult');
+      const btn = document.getElementById('bundleRunBtn');
+      if (!brandUID) {
+        result.innerHTML = '<div style="color:var(--red);font-size:12px">Select a brand first.</div>';
+        return;
+      }
+      btn.disabled = true;
+      btn.textContent = dryRun ? 'Computing…' : 'Running…';
+      result.innerHTML = '<div style="color:var(--text-muted);font-size:12px">Calling /api/bundles/' + escape(bundleName) + '/run…</div>';
+      try {
+        const d = await window._SKCAdmin.api('POST', '/api/bundles/' + encodeURIComponent(bundleName) + '/run', {
+          brandUID, dryRun,
+        });
+        if (d.dryRun) {
+          result.innerHTML = '<div style="color:var(--text);font-size:12px;margin-bottom:6px"><strong>Plan</strong> for ' + escape(d.brandName) + ':</div>' +
+            '<pre style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;font-size:11px;color:var(--text);max-height:300px;overflow:auto">' + escape(JSON.stringify(d.plan, null, 2)) + '</pre>';
+        } else {
+          const created = (d.provisioned || []).filter(p => !p.skipped).length;
+          const fired   = (d.fired || []).length;
+          const skipped = (d.skipped || []).length;
+          result.innerHTML = `
+            <div style="color:var(--green);font-size:12px;margin-bottom:8px"><strong>✓ Done.</strong> ${created} provisioned · ${fired} firing · ${skipped} skipped.</div>
+            <details style="font-size:11px;color:var(--text-muted)"><summary style="cursor:pointer">View full result</summary>
+            <pre style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:10px;color:var(--text);max-height:300px;overflow:auto;margin-top:6px">${escape(JSON.stringify(d, null, 2))}</pre>
+            </details>
+          `;
+          // Refresh the page data so new jobs show up
+          loadAll();
+        }
+      } catch (e) {
+        result.innerHTML = '<div style="color:var(--red);font-size:12px">Failed: ' + escape(e.message) + '</div>';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Run bundle';
+      }
     }
 
     async function loadEndpointGroups(){
@@ -353,7 +544,7 @@
         : 'Brands grouped under each endpoint. Click any brand row for run history.';
     }
 
-    /* ---------- Endpoint cards ---------- */
+    /* ---------- Endpoint cards (grouped by connector source) ---------- */
     function renderEndpoints(){
       const search = (document.getElementById('endpointSearchInput')?.value || '').toLowerCase().trim();
       const showInactive = document.getElementById('endpointShowInactive')?.checked;
@@ -375,49 +566,121 @@
         return;
       }
 
-      host.innerHTML = visible.map(g => {
-        const ep = g.endpoint;
-        const counts = { ok:0, fail:0, running:0, paused:0, neverRun:0 };
+      // Group endpoints by ConnectorName so each source gets its own
+      // collapsible section with branded color/icon.
+      const byConn = new Map();
+      for (const g of visible) {
+        const key = g.endpoint.ConnectorName || '_';
+        if (!byConn.has(key)) {
+          byConn.set(key, {
+            connectorName: key,
+            connectorDisplay: g.endpoint.ConnectorDisplay || key,
+            groups: [],
+            counts: { ok:0, fail:0, running:0, paused:0, neverRun:0, brands:0 },
+          });
+        }
+        byConn.get(key).groups.push(g);
         for (const j of g.jobs) {
           const s = jobStatusFromGroup(j);
-          if (s === 'RUNNING') counts.running++;
-          else if (s === 'FAILED') counts.fail++;
-          else if (s === 'SUCCESS') counts.ok++;
-          else if (s === 'PAUSED') counts.paused++;
-          else counts.neverRun++;
+          const c = byConn.get(key).counts;
+          c.brands++;
+          if (s === 'RUNNING') c.running++;
+          else if (s === 'FAILED') c.fail++;
+          else if (s === 'SUCCESS') c.ok++;
+          else if (s === 'PAUSED') c.paused++;
+          else c.neverRun++;
         }
-        const pills = [
-          counts.running  ? `<span class="stats-pill warn">${counts.running} running</span>` : '',
-          counts.fail     ? `<span class="stats-pill fail">${counts.fail} failing</span>` : '',
-          counts.ok       ? `<span class="stats-pill ok">${counts.ok} ok</span>` : '',
-          counts.paused   ? `<span class="stats-pill">${counts.paused} paused</span>` : '',
-          counts.neverRun ? `<span class="stats-pill">${counts.neverRun} new</span>` : '',
+      }
+
+      // Stable connector order — primary connectors first, then alpha.
+      const order = ['AMAZON_SP_API','SHOPIFY','WALMART','QBO','QUICKBOOKS','ETSY','EBAY'];
+      const sections = Array.from(byConn.values()).sort((a, b) => {
+        const ai = order.indexOf(a.connectorName); const bi = order.indexOf(b.connectorName);
+        if (ai >= 0 && bi >= 0) return ai - bi;
+        if (ai >= 0) return -1; if (bi >= 0) return 1;
+        return a.connectorDisplay.localeCompare(b.connectorDisplay);
+      });
+
+      host.innerHTML = sections.map(sec => {
+        const collapseKey = 'conn:' + sec.connectorName;
+        const isColl = isCollapsed(collapseKey);
+        const headerPills = [
+          sec.counts.running  ? `<span class="stats-pill warn">${sec.counts.running} running</span>` : '',
+          sec.counts.fail     ? `<span class="stats-pill fail">${sec.counts.fail} failing</span>` : '',
+          sec.counts.ok       ? `<span class="stats-pill ok">${sec.counts.ok} ok</span>` : '',
+          sec.counts.paused   ? `<span class="stats-pill">${sec.counts.paused} paused</span>` : '',
+          sec.counts.neverRun ? `<span class="stats-pill">${sec.counts.neverRun} new</span>` : '',
         ].filter(Boolean).join(' ');
 
-        const cron = ep.DefaultCronExpression ? fmt.cron(ep.DefaultCronExpression) : 'manual';
-        const autoChip = ep.AutoCreateOnNewBrand
-          ? '<span class="stats-pill ok" title="Auto-create on new brand onboarding">⚡ auto-create</span>'
-          : '';
-        const inactiveChip = !ep.EndpointIsActive ? '<span class="stats-pill">inactive</span>' : '';
+        const cards = sec.groups.map(g => renderEndpointCard(g)).join('');
 
         return `
-          <div class="ep-card" onclick="openEndpointDrawer(${ep.EndpointID})">
-            <div>
-              <div class="ep-card-title">${escape(ep.EndpointName)} <span style="color:var(--text-muted);font-weight:400">· ${escape(ep.EndpointDisplay || ep.EndpointName)}</span></div>
-              <div class="ep-card-sub">
-                <span>${escape(ep.ConnectorDisplay || ep.ConnectorName)}</span>
-                <span style="color:var(--text-dim)">·</span>
-                <code title="${escape(ep.DefaultCronExpression || 'manual')}">${escape(cron)}</code>
-                <span style="color:var(--text-dim)">·</span>
-                <span>${g.jobs.length} brand${g.jobs.length === 1 ? '' : 's'}</span>
-                ${autoChip ? '<span style="color:var(--text-dim)">·</span>' + autoChip : ''}
-                ${inactiveChip ? '<span style="color:var(--text-dim)">·</span>' + inactiveChip : ''}
-              </div>
+          <div class="conn-section ${isColl ? 'collapsed' : ''}" data-connector="${escape(sec.connectorName)}" data-key="${escape(collapseKey)}">
+            <div class="conn-header" onclick="toggleConnSection('${escapeAttr(collapseKey)}')">
+              <span class="caret">▾</span>
+              <span class="conn-icon">${connIcon(sec.connectorName)}</span>
+              <span class="conn-name">${escape(sec.connectorDisplay)}</span>
+              <span class="conn-meta">${sec.groups.length} endpoint${sec.groups.length === 1 ? '' : 's'} · ${sec.counts.brands} brand${sec.counts.brands === 1 ? '' : 's'}</span>
+              <span style="display:flex;gap:5px">${headerPills}</span>
             </div>
-            <div class="ep-card-pills">${pills || '<span class="stats-pill">no brands</span>'}</div>
+            <div class="conn-body">${cards}</div>
           </div>
         `;
       }).join('');
+    }
+
+    /* Renders one endpoint card. Pulled out so the grouping logic stays clean. */
+    function renderEndpointCard(g){
+      const ep = g.endpoint;
+      const counts = { ok:0, fail:0, running:0, paused:0, neverRun:0 };
+      for (const j of g.jobs) {
+        const s = jobStatusFromGroup(j);
+        if (s === 'RUNNING') counts.running++;
+        else if (s === 'FAILED') counts.fail++;
+        else if (s === 'SUCCESS') counts.ok++;
+        else if (s === 'PAUSED') counts.paused++;
+        else counts.neverRun++;
+      }
+      const pills = [
+        counts.running  ? `<span class="stats-pill warn">${counts.running} running</span>` : '',
+        counts.fail     ? `<span class="stats-pill fail">${counts.fail} failing</span>` : '',
+        counts.ok       ? `<span class="stats-pill ok">${counts.ok} ok</span>` : '',
+        counts.paused   ? `<span class="stats-pill">${counts.paused} paused</span>` : '',
+        counts.neverRun ? `<span class="stats-pill">${counts.neverRun} new</span>` : '',
+      ].filter(Boolean).join(' ');
+
+      const cron = ep.DefaultCronExpression ? fmt.cron(ep.DefaultCronExpression) : 'manual';
+      const autoChip = ep.AutoCreateOnNewBrand
+        ? '<span class="stats-pill ok" title="Auto-create on new brand onboarding">⚡ auto-create</span>'
+        : '';
+      const inactiveChip = !ep.EndpointIsActive ? '<span class="stats-pill">inactive</span>' : '';
+
+      return `
+        <div class="ep-card" onclick="openEndpointDrawer(${ep.EndpointID})">
+          <div class="ep-card-icon">${connIcon(ep.ConnectorName)}</div>
+          <div>
+            <div class="ep-card-title">${escape(ep.EndpointName)} <span style="color:var(--text-muted);font-weight:400">· ${escape(ep.EndpointDisplay || ep.EndpointName)}</span></div>
+            <div class="ep-card-sub">
+              <code title="${escape(ep.DefaultCronExpression || 'manual')}">${escape(cron)}</code>
+              <span style="color:var(--text-dim)">·</span>
+              <span>${g.jobs.length} brand${g.jobs.length === 1 ? '' : 's'}</span>
+              ${autoChip ? '<span style="color:var(--text-dim)">·</span>' + autoChip : ''}
+              ${inactiveChip ? '<span style="color:var(--text-dim)">·</span>' + inactiveChip : ''}
+            </div>
+          </div>
+          <div class="ep-card-pills">${pills || '<span class="stats-pill">no brands</span>'}</div>
+        </div>
+      `;
+    }
+
+    /* Connector section collapse — shares the existing localStorage helpers. */
+    function toggleConnSection(key){
+      const safe = key.replace(/"/g, '\\"');
+      const el = document.querySelector('[data-key="' + safe + '"]');
+      if (!el) return;
+      const willCollapse = !el.classList.contains('collapsed');
+      el.classList.toggle('collapsed', willCollapse);
+      setCollapsed(key, willCollapse);
     }
 
     function jobStatusFromGroup(j) {
@@ -469,15 +732,19 @@
       }).join('') : '<div class="empty" style="padding:14px">No brands attached yet.</div>';
 
       document.getElementById('drawerBody').innerHTML = `
-        <h4 style="margin:0 0 8px 0;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Endpoint defaults (profile)</h4>
+        <h4 style="margin:0 0 8px 0;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Schedule</h4>
+        <div class="ep-defaults" style="padding-top:6px;padding-bottom:6px">
+          ${renderCronPickerHTML(ep.EndpointID, ep.DefaultCronExpression)}
+        </div>
+
+        <h4 style="margin:14px 0 8px 0;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Endpoint defaults (profile)</h4>
         <div class="ep-defaults">
-          <div class="ep-defaults-row"><span class="k">Cron</span><span class="v">${escape(cron)} <span style="color:var(--text-dim)">${escape(fmt.cron(ep.DefaultCronExpression))}</span></span></div>
           <div class="ep-defaults-row"><span class="k">Timezone</span><span class="v">${escape(ep.DefaultTimezoneIANA || 'America/Chicago')}</span></div>
           <div class="ep-defaults-row"><span class="k">Params</span><span class="v">${escape(params)}</span></div>
           <div class="ep-defaults-row"><span class="k">Execution mode</span><span class="v">${escape(ep.DefaultExecutionMode || 'NODE_NATIVE')}</span></div>
           <div class="ep-defaults-row"><span class="k">Job type</span><span class="v">${escape(ep.DefaultJobType || 'INGEST')}</span></div>
           <div class="ep-defaults-row"><span class="k">Default IsActive</span><span class="v">${ep.DefaultIsActive ? 'true' : 'false'}</span></div>
-          <div class="ep-defaults-row"><span class="k">Auto-create on new brand</span><span class="v">${ep.AutoCreateOnNewBrand ? '⚡ yes — app2 onboarding hook will provision this for new brands' : 'no'}</span></div>
+          <div class="ep-defaults-row"><span class="k">Auto-create on new brand</span><span class="v">${ep.AutoCreateOnNewBrand ? '⚡ yes — onboarding bundle provisions this for new brands' : 'no'}</span></div>
         </div>
 
         <h4 style="margin:18px 0 8px 0;font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">Brands attached (${group.jobs.length})</h4>
@@ -485,10 +752,122 @@
 
         <p style="color:var(--text-dim);font-size:11px;margin-top:14px">
           Click a brand row for run history + per-brand actions. The ▶ button on the right runs the brand's job immediately.
-          <br><br>
-          <strong>Coming next:</strong> inline editor for endpoint defaults + "Add brand" button to attach more brands without SQL.
         </p>
       `;
+    }
+
+    /* ---------- Visual cron picker (drawer) ----------
+       Translates between humanized presets and a cron string. The user
+       can stay in preset mode for the common cases or pop into "Custom"
+       to type a raw expression. We display the live cron preview so it's
+       always clear what gets stored. */
+    const CRON_PRESETS = [
+      { label: 'Every hour',         expr: '0 * * * *' },
+      { label: 'Every 2 hours',      expr: '0 */2 * * *' },
+      { label: 'Every 4 hours',      expr: '0 */4 * * *' },
+      { label: 'Every 6 hours',      expr: '0 */6 * * *' },
+      { label: 'Every 12 hours',     expr: '0 */12 * * *' },
+      { label: 'Daily at 3am',       expr: '0 3 * * *' },
+      { label: 'Daily at 5am',       expr: '0 5 * * *' },
+      { label: 'Daily at 8am',       expr: '0 8 * * *' },
+      { label: 'Weekdays at 8am',    expr: '0 8 * * 1-5' },
+      { label: 'Sundays at midnight', expr: '0 0 * * 0' },
+    ];
+    function renderCronPickerHTML(endpointID, currentExpr){
+      const preset = CRON_PRESETS.find(p => p.expr === (currentExpr || '').trim());
+      const mode = preset ? 'preset' : (currentExpr ? 'custom' : 'manual');
+      const exprAttr = escape(currentExpr || '');
+      return `
+        <div class="cron-picker">
+          <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em">When</span>
+          <select id="cronModeSelect" onchange="onCronModeChange(${endpointID})">
+            <option value="manual"${mode === 'manual' ? ' selected' : ''}>Manual only — no schedule</option>
+            ${CRON_PRESETS.map(p => `<option value="preset:${escape(p.expr)}"${mode === 'preset' && preset.expr === p.expr ? ' selected' : ''}>${escape(p.label)}</option>`).join('')}
+            <option value="custom"${mode === 'custom' ? ' selected' : ''}>Custom cron expression…</option>
+          </select>
+          <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em" id="cronCustomLbl" style="display:${mode === 'custom' ? '' : 'none'}">Cron</span>
+          <input id="cronCustomInput" type="text" placeholder="e.g. 0 */4 * * *" value="${exprAttr}" style="display:${mode === 'custom' ? '' : 'none'};font-family:'Space Mono',monospace" oninput="updateCronPreview()">
+          <div class="cron-preview" id="cronPreview">
+            ${currentExpr ? '→ ' + escape(currentExpr) + '   <span style="color:var(--text-muted)">(' + escape(fmt.cron(currentExpr)) + ')</span>' : '→ no schedule (manual fires only)'}
+          </div>
+          <span></span>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn btn-small" id="cronSaveBtn" onclick="saveCron(${endpointID})" disabled style="opacity:.5">Save schedule</button>
+            <span id="cronSaveStatus" style="font-size:11px;color:var(--text-muted)"></span>
+          </div>
+        </div>
+      `;
+    }
+    function readCronExpr(){
+      const mode = document.getElementById('cronModeSelect').value;
+      if (mode === 'manual') return null;
+      if (mode === 'custom') {
+        const v = (document.getElementById('cronCustomInput').value || '').trim();
+        return v || null;
+      }
+      // preset:<expr>
+      return mode.replace(/^preset:/, '');
+    }
+    function onCronModeChange(endpointID){
+      const mode = document.getElementById('cronModeSelect').value;
+      const inp = document.getElementById('cronCustomInput');
+      const lbl = document.getElementById('cronCustomLbl');
+      const isCustom = mode === 'custom';
+      inp.style.display = isCustom ? '' : 'none';
+      if (lbl) lbl.style.display = isCustom ? '' : 'none';
+      if (mode.startsWith('preset:')) {
+        inp.value = mode.replace(/^preset:/, '');
+      } else if (mode === 'manual') {
+        inp.value = '';
+      }
+      enableCronSaveIfDirty(endpointID);
+      updateCronPreview();
+    }
+    function updateCronPreview(){
+      const expr = readCronExpr();
+      const el = document.getElementById('cronPreview');
+      if (!expr) {
+        el.innerHTML = '→ no schedule (manual fires only)';
+      } else {
+        el.innerHTML = '→ ' + escape(expr) + '   <span style="color:var(--text-muted)">(' + escape(fmt.cron(expr)) + ')</span>';
+      }
+      enableCronSaveIfDirty();
+    }
+    function enableCronSaveIfDirty(endpointID){
+      // Compare against the original on the cached endpoint group
+      const btn = document.getElementById('cronSaveBtn');
+      if (!btn) return;
+      const group = endpointGroupsCache.find(g => g.endpoint.EndpointID === currentEndpointID);
+      const original = group ? (group.endpoint.DefaultCronExpression || null) : null;
+      const next = readCronExpr();
+      const dirty = (original || null) !== (next || null);
+      btn.disabled = !dirty;
+      btn.style.opacity = dirty ? '1' : '.5';
+    }
+    async function saveCron(endpointID){
+      const expr = readCronExpr();
+      const status = document.getElementById('cronSaveStatus');
+      const btn = document.getElementById('cronSaveBtn');
+      btn.disabled = true; btn.style.opacity = '.5';
+      status.textContent = 'Saving…'; status.style.color = 'var(--text-muted)';
+      try {
+        // PATCH the endpoint defaults. Existing endpoint route at
+        // PATCH /api/endpoints/:uid/defaults takes { defaultCronExpression }
+        const group = endpointGroupsCache.find(g => g.endpoint.EndpointID === endpointID);
+        if (!group) throw new Error('Endpoint not in cache — refresh page');
+        const epUID = group.endpoint.EndpointUID;
+        if (!epUID) throw new Error('Endpoint missing UID — backend payload needs EndpointUID added to /api/jobs/by-endpoint');
+        await window._SKCAdmin.api('PATCH', '/api/endpoints/' + encodeURIComponent(epUID) + '/defaults', {
+          defaultCronExpression: expr,
+        });
+        status.textContent = '✓ Saved. Reloading…'; status.style.color = 'var(--green)';
+        await loadEndpointGroups();
+        // Re-render the drawer with fresh data
+        openEndpointDrawer(endpointID);
+      } catch (e) {
+        status.textContent = '✗ ' + e.message; status.style.color = 'var(--red)';
+        btn.disabled = false; btn.style.opacity = '1';
+      }
     }
 
     function openBrandFromEndpoint(jobID){
