@@ -226,6 +226,7 @@
         <span style="font-size:12px;color:var(--text-muted);font-weight:600;text-transform:uppercase;letter-spacing:0.05em">View:</span>
         <button id="viewToggleEndpoint" class="btn btn-small" onclick="setView('endpoint')">📂 By endpoint</button>
         <button id="viewToggleBrand" class="btn btn-small btn-secondary" onclick="setView('brand')">📋 By brand</button>
+        <button id="viewToggleProject" class="btn btn-small btn-secondary" onclick="setView('project')">📁 By project</button>
         <span style="flex:1"></span>
         <span id="viewHint" style="color:var(--text-dim);font-size:11px"></span>
       </div>
@@ -240,6 +241,18 @@
             <span id="endpointCount" style="color:var(--text-muted);font-size:12px"></span>
           </div>
           <div id="endpointContainer"></div>
+        </div>
+      </div>
+
+      <!-- Project (folder) view — Folder System v1 (read-only) -->
+      <div id="projectView" style="display:none">
+        <div class="card">
+          <div class="toolbar">
+            <input id="projectSearchInput" type="search" placeholder="Search projects…" oninput="renderProjects()">
+            <span style="flex:1"></span>
+            <span id="projectCount" style="color:var(--text-muted);font-size:12px"></span>
+          </div>
+          <div id="projectContainer"></div>
         </div>
       </div>
 
@@ -285,11 +298,14 @@
   <script>
     let jobsCache = [];
     let endpointGroupsCache = [];
+    let projectsCache = [];                              // [{ ProjectID, ProjectUID, Name, ... counts }]
+    const projectDetailsCache = new Map();               // UID -> { project, endpoints, brands, jobs }
+    const expandedProjects = new Set();                  // ProjectUIDs currently expanded inline
     let currentJobID = null;
     let currentEndpointID = null;       // when set, drawer shows endpoint detail
     let drawerStack = [];               // ['endpoint', endpointID] etc. for back-nav
     let pollTimer = null;
-    let currentView = 'endpoint';       // 'endpoint' (default) | 'brand'
+    let currentView = 'endpoint';       // 'endpoint' (default) | 'brand' | 'project'
 
     /* ---------- Formatters ---------- */
     const fmt = {
@@ -531,17 +547,225 @@
       }
     }
 
+    /* ---------- Projects (Folder System v1) ---------- */
+    async function loadProjects(){
+      try {
+        const d = await window._SKCAdmin.api('GET', '/api/projects');
+        projectsCache = d.projects || [];
+        renderProjects();
+        // Refresh details for any expanded projects so counts/jobs stay live.
+        for (const uid of expandedProjects) loadProjectDetail(uid, /*silent=*/true);
+      } catch (e) {
+        const host = document.getElementById('projectContainer');
+        if (host) host.innerHTML = '<div class="empty">Failed to load projects: ' + escape(e.message) + '</div>';
+      }
+    }
+
+    async function loadProjectDetail(uid, silent){
+      try {
+        const d = await window._SKCAdmin.api('GET', '/api/projects/' + encodeURIComponent(uid));
+        projectDetailsCache.set(uid, d);
+        if (!silent) renderProjects();
+        else if (currentView === 'project') renderProjects();   // background refresh
+      } catch (e) {
+        if (!silent) {
+          const host = document.getElementById('projectContainer');
+          if (host) host.innerHTML = '<div class="empty">Failed to load project: ' + escape(e.message) + '</div>';
+        }
+      }
+    }
+
+    function toggleProjectExpand(uid){
+      if (expandedProjects.has(uid)) {
+        expandedProjects.delete(uid);
+        renderProjects();
+      } else {
+        expandedProjects.add(uid);
+        if (!projectDetailsCache.has(uid)) loadProjectDetail(uid);
+        else renderProjects();
+      }
+    }
+
     function setView(v){
       currentView = v;
       document.getElementById('endpointView').style.display = v === 'endpoint' ? '' : 'none';
       document.getElementById('brandView').style.display    = v === 'brand'    ? '' : 'none';
+      document.getElementById('projectView').style.display  = v === 'project'  ? '' : 'none';
       // Toggle button styling
       document.getElementById('viewToggleEndpoint').classList.toggle('btn-secondary', v !== 'endpoint');
       document.getElementById('viewToggleBrand').classList.toggle('btn-secondary',    v !== 'brand');
+      document.getElementById('viewToggleProject').classList.toggle('btn-secondary',  v !== 'project');
       try { localStorage.setItem('jobs.view', v); } catch (_) {}
-      document.getElementById('viewHint').textContent = v === 'endpoint'
-        ? 'Endpoints are profiles — defaults at the top, brands inherit. Click any endpoint for the brand list.'
-        : 'Brands grouped under each endpoint. Click any brand row for run history.';
+      document.getElementById('viewHint').textContent =
+          v === 'endpoint' ? 'Endpoints are profiles — defaults at the top, brands inherit. Click any endpoint for the brand list.'
+        : v === 'brand'    ? 'Brands grouped under each endpoint. Click any brand row for run history.'
+        :                    'Projects are folders that group endpoints + brands. Click a project to see its scope. (Read-only in v1.)';
+      if (v === 'project' && !projectsCache.length) loadProjects();
+    }
+
+    /* ---------- Project folder cards ---------- */
+    function renderProjects(){
+      const host = document.getElementById('projectContainer');
+      if (!host) return;
+      const search = (document.getElementById('projectSearchInput')?.value || '').toLowerCase().trim();
+
+      const visible = projectsCache.filter(p => {
+        if (!search) return true;
+        const hay = ((p.Name || '') + ' ' + (p.DisplayName || '') + ' ' +
+                     (p.ConnectorScope || '') + ' ' + (p.Description || '')).toLowerCase();
+        return hay.includes(search);
+      });
+
+      document.getElementById('projectCount').textContent =
+        visible.length + ' of ' + projectsCache.length + ' project' + (projectsCache.length === 1 ? '' : 's');
+
+      if (!projectsCache.length) {
+        host.innerHTML = '<div class="empty">No projects yet. Seeded set: Amazon Daily, Amazon Onboarding, Walmart Daily.</div>';
+        return;
+      }
+      if (!visible.length) {
+        host.innerHTML = '<div class="empty">No projects match the current search.</div>';
+        return;
+      }
+
+      host.innerHTML = visible.map(p => renderProjectCard(p)).join('');
+    }
+
+    function renderProjectCard(p){
+      const uid = p.ProjectUID;
+      const expanded = expandedProjects.has(uid);
+      const display = escape(p.DisplayName || p.Name || '(unnamed)');
+      const internal = p.DisplayName ? '<span style="color:var(--text-dim);font-size:11px;margin-left:8px">' + escape(p.Name) + '</span>' : '';
+      const scope = p.ConnectorScope
+        ? '<span style="background:rgba(99,102,241,.15);color:#a5b4fc;border:1px solid rgba(99,102,241,.3);padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600">' + escape(p.ConnectorScope) + '</span>'
+        : '<span style="color:var(--text-dim);font-size:11px">cross-connector</span>';
+
+      const eCount   = p.EndpointCount        || 0;
+      const bCount   = p.BrandCount           || 0;
+      const jCount   = p.ManagedJobCount      || 0;
+      const jActive  = p.ActiveManagedJobCount|| 0;
+
+      const desc = p.Description
+        ? '<div style="color:var(--text-muted);font-size:12px;margin-top:4px">' + escape(p.Description) + '</div>'
+        : '';
+
+      // Detail section if expanded
+      let detail = '';
+      if (expanded) {
+        const cached = projectDetailsCache.get(uid);
+        if (!cached) {
+          detail = '<div class="empty" style="padding:14px">Loading project detail…</div>';
+        } else {
+          detail = renderProjectDetailBody(cached);
+        }
+      }
+
+      return (
+        '<div class="card" style="margin-bottom:10px;padding:0">' +
+          '<div onclick="toggleProjectExpand(\'' + escapeAttr(uid) + '\')" ' +
+               'style="cursor:pointer;padding:14px 16px;display:flex;align-items:center;gap:14px">' +
+            '<span style="font-size:16px;width:14px;display:inline-block;color:var(--text-muted)">' + (expanded ? '▾' : '▸') + '</span>' +
+            '<span style="font-size:18px">📁</span>' +
+            '<div style="flex:1;min-width:0">' +
+              '<div style="font-weight:600">' + display + internal + '</div>' +
+              desc +
+            '</div>' +
+            scope +
+            '<span style="display:flex;gap:10px;color:var(--text-muted);font-size:12px;white-space:nowrap">' +
+              '<span title="Endpoints">📂 ' + eCount + '</span>' +
+              '<span title="Brands">🏷️ ' + bCount + '</span>' +
+              '<span title="Managed jobs (active / total)">⚙️ ' + jActive + ' / ' + jCount + '</span>' +
+            '</span>' +
+          '</div>' +
+          (expanded ? '<div style="border-top:1px solid var(--border)">' + detail + '</div>' : '') +
+        '</div>'
+      );
+    }
+
+    function renderProjectDetailBody(d){
+      const eps    = d.endpoints || [];
+      const brands = d.brands    || [];
+      const jobs   = d.jobs      || [];
+
+      const epRows = eps.length ? eps.map(e => (
+        '<tr>' +
+          '<td style="padding:6px 10px"><strong>' + escape(e.EndpointDisplay || e.EndpointName) + '</strong>' +
+            '<div style="color:var(--text-dim);font-size:11px">' + escape(e.ConnectorDisplay || e.ConnectorName || '') + ' · ' + escape(e.JobType) + '</div>' +
+          '</td>' +
+          '<td style="padding:6px 10px;font-family:monospace;font-size:11px;color:var(--text-muted)">' +
+            (e.CronExpression ? escape(e.CronExpression) : '<span style="color:var(--text-dim)">— no cron —</span>') +
+          '</td>' +
+          '<td style="padding:6px 10px;color:var(--text-muted);font-size:11px">' + escape(e.TimezoneIANA || '') + '</td>' +
+          '<td style="padding:6px 10px;text-align:right">' + (e.IsActive
+              ? '<span style="color:var(--green);font-size:11px">● active</span>'
+              : '<span style="color:var(--text-dim);font-size:11px">○ inactive</span>') +
+          '</td>' +
+        '</tr>'
+      )).join('') : '<tr><td colspan="4" class="empty" style="padding:10px">No endpoints attached yet.</td></tr>';
+
+      const brandRows = brands.length ? brands.map(b => (
+        '<tr>' +
+          '<td style="padding:6px 10px"><strong>' + escape(b.BrandName || '(unknown brand)') + '</strong>' +
+            (b.BrandCategory ? ' <span style="color:var(--text-dim);font-size:11px">[' + escape(b.BrandCategory) + ']</span>' : '') +
+          '</td>' +
+          '<td style="padding:6px 10px;color:var(--text-dim);font-family:monospace;font-size:11px">' + escape(b.BrandUID) + '</td>' +
+          '<td style="padding:6px 10px;text-align:right">' + (b.IsActive
+              ? '<span style="color:var(--green);font-size:11px">● member</span>'
+              : '<span style="color:var(--text-dim);font-size:11px">○ paused</span>') +
+          '</td>' +
+        '</tr>'
+      )).join('') : '<tr><td colspan="3" class="empty" style="padding:10px">No brands attached yet.</td></tr>';
+
+      const jobRows = jobs.length ? jobs.map(j => {
+        const statusColor =
+            j.LastRunStatus === 'SUCCESS' ? 'var(--green)'
+          : j.LastRunStatus === 'FAILED'  ? 'var(--red)'
+          : j.LastRunStatus === 'RUNNING' ? 'var(--blue)'
+          :                                  'var(--text-dim)';
+        const statusLabel = j.LastRunStatus
+          ? '<span style="color:' + statusColor + ';font-size:11px">● ' + escape(j.LastRunStatus.toLowerCase()) + '</span>'
+          : '<span style="color:var(--text-dim);font-size:11px">never run</span>';
+        return (
+          '<tr>' +
+            '<td style="padding:6px 10px"><strong>' + escape(j.EndpointName || '?') + '</strong>' +
+              '<div style="color:var(--text-dim);font-size:11px">' + escape(j.JobName || '') + '</div>' +
+            '</td>' +
+            '<td style="padding:6px 10px">' + escape(j.BrandName || '?') + '</td>' +
+            '<td style="padding:6px 10px;font-family:monospace;font-size:11px;color:var(--text-muted)">' +
+              (j.CronExpression ? escape(j.CronExpression) : '—') +
+            '</td>' +
+            '<td style="padding:6px 10px">' + statusLabel +
+              (j.LastRunAt ? ' <span style="color:var(--text-dim);font-size:11px">' + escape(fmt.rel(j.LastRunAt)) + '</span>' : '') +
+            '</td>' +
+            '<td style="padding:6px 10px;text-align:right">' + (j.IsActive
+                ? (j.ConsecutiveFailures > 0 ? '<span style="color:#fbbf24;font-size:11px">⚠ ' + j.ConsecutiveFailures + ' fails</span>' : '<span style="color:var(--green);font-size:11px">on</span>')
+                : '<span style="color:var(--text-dim);font-size:11px">paused</span>') +
+            '</td>' +
+          '</tr>'
+        );
+      }).join('') : '<tr><td colspan="5" class="empty" style="padding:10px">No materialized jobs yet. Brand membership + endpoints will materialize jobs in v2.</td></tr>';
+
+      const sectionStyle = 'padding:14px 16px';
+      const headerStyle  = 'font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px';
+      const tableStyle   = 'width:100%;border-collapse:collapse;font-size:13px';
+
+      return (
+        '<div style="' + sectionStyle + '">' +
+          '<div style="' + headerStyle + '">Endpoints in this project (' + eps.length + ')</div>' +
+          '<table style="' + tableStyle + '"><tbody>' + epRows + '</tbody></table>' +
+        '</div>' +
+        '<div style="' + sectionStyle + ';border-top:1px solid var(--border)">' +
+          '<div style="' + headerStyle + '">Member brands (' + brands.length + ')</div>' +
+          '<table style="' + tableStyle + '"><tbody>' + brandRows + '</tbody></table>' +
+        '</div>' +
+        '<div style="' + sectionStyle + ';border-top:1px solid var(--border)">' +
+          '<div style="' + headerStyle + '">Materialized jobs (' + jobs.length + ')</div>' +
+          '<table style="' + tableStyle + '"><tbody>' + jobRows + '</tbody></table>' +
+        '</div>' +
+        '<div style="padding:10px 16px;border-top:1px solid var(--border);background:rgba(255,255,255,.02);color:var(--text-dim);font-size:11px">' +
+          'Read-only in v1. Editing membership + project-level cron lands in v2.' +
+        '</div>'
+      );
     }
 
     /* ---------- Endpoint cards (grouped by connector source) ---------- */
@@ -1362,13 +1586,17 @@
       // Restore saved view preference (defaults to endpoint).
       let saved = 'endpoint';
       try { saved = localStorage.getItem('jobs.view') || 'endpoint'; } catch (_) {}
-      setView(saved === 'brand' ? 'brand' : 'endpoint');
+      const validView = (saved === 'brand' || saved === 'project') ? saved : 'endpoint';
+      setView(validView);
 
       await loadAll();
-      // Poll both views every 5s so live status stays fresh regardless of
-      // which view the user has open.
+      if (validView === 'project') await loadProjects();
+
+      // Poll all views every 5s so live status stays fresh regardless of
+      // which view the user has open. Projects refresh inline-expanded
+      // detail too (loadProjects → loadProjectDetail for each expanded UID).
       pollTimer = setInterval(async () => {
-        await Promise.all([ loadJobs(), loadEndpointGroups() ]);
+        await Promise.all([ loadJobs(), loadEndpointGroups(), loadProjects() ]);
       }, 5000);
     });
   </script>
