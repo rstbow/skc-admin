@@ -301,6 +301,10 @@
     let projectsCache = [];                              // [{ ProjectID, ProjectUID, Name, ... counts }]
     const projectDetailsCache = new Map();               // UID -> { project, endpoints, brands, jobs }
     const expandedProjects = new Set();                  // ProjectUIDs currently expanded inline
+    const editingProjects = new Set();                   // ProjectUIDs in edit mode
+    let endpointCatalogCache = [];                       // [{ EndpointUID, EndpointID, Name, DisplayName, ConnectorName, ... }]
+    let brandCatalogCache = [];                          // [{ BrandUID, BrandName, IsActive }]
+    let creatingProject = false;                         // toggled by the "+ New project" button
     let currentJobID = null;
     let currentEndpointID = null;       // when set, drawer shows endpoint detail
     let drawerStack = [];               // ['endpoint', endpointID] etc. for back-nav
@@ -547,7 +551,7 @@
       }
     }
 
-    /* ---------- Projects (Folder System v1) ---------- */
+    /* ---------- Projects (Folder System v1 read + v2 edit) ---------- */
     async function loadProjects(){
       try {
         const d = await window._SKCAdmin.api('GET', '/api/projects');
@@ -559,6 +563,23 @@
         const host = document.getElementById('projectContainer');
         if (host) host.innerHTML = '<div class="empty">Failed to load projects: ' + escape(e.message) + '</div>';
       }
+    }
+
+    async function ensureCatalogsLoaded(){
+      // The "+ Add endpoint" and "+ Add brand" dropdowns need flat lists of
+      // available endpoints + brands. Load once on demand and cache.
+      const promises = [];
+      if (!endpointCatalogCache.length) {
+        promises.push(window._SKCAdmin.api('GET', '/api/endpoints')
+          .then(d => { endpointCatalogCache = d.endpoints || d || []; })
+          .catch(() => {}));
+      }
+      if (!brandCatalogCache.length) {
+        promises.push(window._SKCAdmin.api('GET', '/api/brands')
+          .then(d => { brandCatalogCache = d.brands || d || []; })
+          .catch(() => {}));
+      }
+      if (promises.length) await Promise.all(promises);
     }
 
     async function loadProjectDetail(uid, silent){
@@ -619,21 +640,32 @@
       document.getElementById('projectCount').textContent =
         visible.length + ' of ' + projectsCache.length + ' project' + (projectsCache.length === 1 ? '' : 's');
 
-      if (!projectsCache.length) {
-        host.innerHTML = '<div class="empty">No projects yet. Seeded set: Amazon Daily, Amazon Onboarding, Walmart Daily.</div>';
-        return;
+      let html = '';
+
+      // "+ New project" affordance + (when active) the inline create form
+      html += '<div style="margin-bottom:14px">';
+      if (!creatingProject) {
+        html += '<button class="btn btn-small" onclick="startCreateProject()">＋ New project</button>';
+      } else {
+        html += renderCreateProjectForm();
       }
-      if (!visible.length) {
-        host.innerHTML = '<div class="empty">No projects match the current search.</div>';
-        return;
+      html += '</div>';
+
+      if (!projectsCache.length) {
+        html += '<div class="empty">No projects yet. Click ＋ New project to create one.</div>';
+      } else if (!visible.length) {
+        html += '<div class="empty">No projects match the current search.</div>';
+      } else {
+        html += visible.map(p => renderProjectCard(p)).join('');
       }
 
-      host.innerHTML = visible.map(p => renderProjectCard(p)).join('');
+      host.innerHTML = html;
     }
 
     function renderProjectCard(p){
       const uid = p.ProjectUID;
       const expanded = expandedProjects.has(uid);
+      const editing  = editingProjects.has(uid);
       const display = escape(p.DisplayName || p.Name || '(unnamed)');
       const internal = p.DisplayName ? '<span style="color:var(--text-dim);font-size:11px;margin-left:8px">' + escape(p.Name) + '</span>' : '';
       const scope = p.ConnectorScope
@@ -656,9 +688,18 @@
         if (!cached) {
           detail = '<div class="empty" style="padding:14px">Loading project detail…</div>';
         } else {
-          detail = renderProjectDetailBody(cached);
+          detail = renderProjectDetailBody(cached, editing);
         }
       }
+
+      // Edit / Done-editing button — visible only when expanded.
+      const editBtn = expanded
+        ? '<button class="btn btn-small ' + (editing ? '' : 'btn-secondary') + '" ' +
+            'style="margin-right:8px" ' +
+            'onclick="event.stopPropagation();toggleProjectEditMode(\'' + escapeAttr(uid) + '\')">' +
+            (editing ? '✓ Done' : '✏️ Edit') +
+          '</button>'
+        : '';
 
       return (
         '<div class="card" style="margin-bottom:10px;padding:0">' +
@@ -676,30 +717,41 @@
               '<span title="Brands">🏷️ ' + bCount + '</span>' +
               '<span title="Managed jobs (active / total)">⚙️ ' + jActive + ' / ' + jCount + '</span>' +
             '</span>' +
+            editBtn +
           '</div>' +
           (expanded ? '<div style="border-top:1px solid var(--border)">' + detail + '</div>' : '') +
         '</div>'
       );
     }
 
-    function renderProjectDetailBody(d){
+    function renderProjectDetailBody(d, editMode){
       const eps    = d.endpoints || [];
       const brands = d.brands    || [];
       const jobs   = d.jobs      || [];
+      const uid    = d.project?.ProjectUID;
 
       const epRows = eps.length ? eps.map(e => (
         '<tr>' +
           '<td style="padding:6px 10px"><strong>' + escape(e.EndpointDisplay || e.EndpointName) + '</strong>' +
             '<div style="color:var(--text-dim);font-size:11px">' + escape(e.ConnectorDisplay || e.ConnectorName || '') + ' · ' + escape(e.JobType) + '</div>' +
           '</td>' +
-          '<td style="padding:6px 10px;font-family:monospace;font-size:11px;color:var(--text-muted)">' +
-            (e.CronExpression ? escape(e.CronExpression) : '<span style="color:var(--text-dim)">— no cron —</span>') +
-          '</td>' +
-          '<td style="padding:6px 10px;color:var(--text-muted);font-size:11px">' + escape(e.TimezoneIANA || '') + '</td>' +
-          '<td style="padding:6px 10px;text-align:right">' + (e.IsActive
-              ? '<span style="color:var(--green);font-size:11px">● active</span>'
-              : '<span style="color:var(--text-dim);font-size:11px">○ inactive</span>') +
-          '</td>' +
+          (editMode
+            ? '<td style="padding:6px 10px"><input type="text" value="' + escape(e.CronExpression || '') + '" placeholder="cron expression" id="pe-cron-' + e.ProjectEndpointID + '" style="width:160px;font-family:monospace;font-size:11px;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px"></td>' +
+              '<td style="padding:6px 10px"><input type="text" value="' + escape(e.TimezoneIANA || '') + '" placeholder="America/Chicago" id="pe-tz-' + e.ProjectEndpointID + '" style="width:160px;font-size:11px;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:4px 6px;border-radius:4px"></td>' +
+              '<td style="padding:6px 10px;text-align:right;white-space:nowrap">' +
+                '<label style="font-size:11px;margin-right:8px"><input type="checkbox" id="pe-active-' + e.ProjectEndpointID + '" ' + (e.IsActive ? 'checked' : '') + '> active</label>' +
+                '<button class="btn btn-small" onclick="saveProjectEndpoint(\'' + escapeAttr(uid) + '\',' + e.ProjectEndpointID + ')">Save</button> ' +
+                '<button class="btn btn-small btn-secondary" onclick="removeProjectEndpoint(\'' + escapeAttr(uid) + '\',' + e.ProjectEndpointID + ',\'' + escapeAttr(e.EndpointName) + '\')">Remove</button>' +
+              '</td>'
+            : '<td style="padding:6px 10px;font-family:monospace;font-size:11px;color:var(--text-muted)">' +
+                (e.CronExpression ? escape(e.CronExpression) : '<span style="color:var(--text-dim)">— no cron —</span>') +
+              '</td>' +
+              '<td style="padding:6px 10px;color:var(--text-muted);font-size:11px">' + escape(e.TimezoneIANA || '') + '</td>' +
+              '<td style="padding:6px 10px;text-align:right">' + (e.IsActive
+                  ? '<span style="color:var(--green);font-size:11px">● active</span>'
+                  : '<span style="color:var(--text-dim);font-size:11px">○ inactive</span>') +
+              '</td>'
+          ) +
         '</tr>'
       )).join('') : '<tr><td colspan="4" class="empty" style="padding:10px">No endpoints attached yet.</td></tr>';
 
@@ -712,6 +764,7 @@
           '<td style="padding:6px 10px;text-align:right">' + (b.IsActive
               ? '<span style="color:var(--green);font-size:11px">● member</span>'
               : '<span style="color:var(--text-dim);font-size:11px">○ paused</span>') +
+            (editMode ? ' <button class="btn btn-small btn-secondary" onclick="removeProjectBrand(\'' + escapeAttr(uid) + '\',' + b.ProjectBrandID + ',\'' + escapeAttr(b.BrandName || '') + '\')">Remove</button>' : '') +
           '</td>' +
         '</tr>'
       )).join('') : '<tr><td colspan="3" class="empty" style="padding:10px">No brands attached yet.</td></tr>';
@@ -749,23 +802,273 @@
       const headerStyle  = 'font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px';
       const tableStyle   = 'width:100%;border-collapse:collapse;font-size:13px';
 
+      // Edit-mode-only sections: header editor, add-endpoint form, add-brand form, danger zone
+      const headerEditor = editMode ? renderProjectHeaderEditor(d.project) : '';
+      const addEndpointForm = editMode ? renderAddEndpointForm(d.project) : '';
+      const addBrandForm    = editMode ? renderAddBrandForm(d.project)    : '';
+      const dangerZone      = editMode ? renderProjectDangerZone(d.project) : '';
+
       return (
-        '<div style="' + sectionStyle + '">' +
+        headerEditor +
+        '<div style="' + sectionStyle + (editMode ? ';border-top:1px solid var(--border)' : '') + '">' +
           '<div style="' + headerStyle + '">Endpoints in this project (' + eps.length + ')</div>' +
           '<table style="' + tableStyle + '"><tbody>' + epRows + '</tbody></table>' +
+          addEndpointForm +
         '</div>' +
         '<div style="' + sectionStyle + ';border-top:1px solid var(--border)">' +
           '<div style="' + headerStyle + '">Member brands (' + brands.length + ')</div>' +
           '<table style="' + tableStyle + '"><tbody>' + brandRows + '</tbody></table>' +
+          addBrandForm +
         '</div>' +
         '<div style="' + sectionStyle + ';border-top:1px solid var(--border)">' +
           '<div style="' + headerStyle + '">Materialized jobs (' + jobs.length + ')</div>' +
           '<table style="' + tableStyle + '"><tbody>' + jobRows + '</tbody></table>' +
         '</div>' +
-        '<div style="padding:10px 16px;border-top:1px solid var(--border);background:rgba(255,255,255,.02);color:var(--text-dim);font-size:11px">' +
-          'Read-only in v1. Editing membership + project-level cron lands in v2.' +
+        dangerZone +
+        (editMode
+          ? '<div style="padding:10px 16px;border-top:1px solid var(--border);background:rgba(99,102,241,.05);color:var(--text-muted);font-size:11px">' +
+              '✏️ Edit mode — changes save individually. Removing an endpoint or brand soft-deletes its managed jobs (pauses + un-manages, run history kept).' +
+            '</div>'
+          : '<div style="padding:10px 16px;border-top:1px solid var(--border);background:rgba(255,255,255,.02);color:var(--text-dim);font-size:11px">' +
+              'Read-only view. Click ✏️ Edit to change membership or settings.' +
+            '</div>')
+      );
+    }
+
+    /* ---------- v2 edit-mode subviews ---------- */
+
+    function renderProjectHeaderEditor(p){
+      if (!p) return '';
+      const uid = p.ProjectUID;
+      return (
+        '<div style="padding:14px 16px;background:rgba(99,102,241,.04);border-bottom:1px solid var(--border)">' +
+          '<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px">Project header</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">' +
+            '<label>Name<br><input type="text" id="ph-name-' + uid + '" value="' + escape(p.Name || '') + '" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px"></label>' +
+            '<label>Display name<br><input type="text" id="ph-display-' + uid + '" value="' + escape(p.DisplayName || '') + '" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px"></label>' +
+            '<label>Connector scope<br><input type="text" id="ph-scope-' + uid + '" value="' + escape(p.ConnectorScope || '') + '" placeholder="e.g. AMAZON_SP_API or empty for cross" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px"></label>' +
+            '<label>Sort order<br><input type="number" id="ph-sort-' + uid + '" value="' + (p.SortOrder != null ? p.SortOrder : 100) + '" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px"></label>' +
+            '<label style="grid-column:1 / -1">Description<br><textarea id="ph-desc-' + uid + '" rows="2" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-family:inherit;resize:vertical">' + escape(p.Description || '') + '</textarea></label>' +
+          '</div>' +
+          '<div style="margin-top:10px;display:flex;gap:8px;align-items:center">' +
+            '<label style="font-size:12px"><input type="checkbox" id="ph-active-' + uid + '" ' + (p.IsActive ? 'checked' : '') + '> active</label>' +
+            '<span style="flex:1"></span>' +
+            '<button class="btn btn-small" onclick="saveProjectHeader(\'' + escapeAttr(uid) + '\')">Save header</button>' +
+          '</div>' +
         '</div>'
       );
+    }
+
+    function renderAddEndpointForm(p){
+      if (!p) return '';
+      const uid = p.ProjectUID;
+      // Filter the endpoint catalog to those not already attached + (optionally) matching ConnectorScope
+      const attached = new Set();
+      const cached = projectDetailsCache.get(uid);
+      if (cached) for (const pe of cached.endpoints || []) attached.add(pe.EndpointID + '|' + pe.JobType);
+
+      const catalog = endpointCatalogCache.filter(e => {
+        if (p.ConnectorScope && e.ConnectorName && e.ConnectorName !== p.ConnectorScope) return false;
+        return true;
+      });
+
+      const opts = catalog.length
+        ? catalog.map(e => '<option value="' + e.EndpointID + '">' + escape((e.DisplayName || e.Name) + ' (' + (e.ConnectorName || '?') + ')') + '</option>').join('')
+        : '<option value="">— no endpoints in catalog —</option>';
+
+      return (
+        '<div style="margin-top:10px;padding:10px;background:rgba(255,255,255,.02);border:1px dashed var(--border);border-radius:6px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">' +
+          '<label style="font-size:11px">Endpoint<br>' +
+            '<select id="ae-endpoint-' + uid + '" style="background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:5px 6px;border-radius:4px;min-width:260px">' + opts + '</select>' +
+          '</label>' +
+          '<label style="font-size:11px">Job type<br>' +
+            '<select id="ae-jobtype-' + uid + '" style="background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:5px 6px;border-radius:4px">' +
+              '<option value="INGEST">INGEST</option>' +
+              '<option value="ROLLUP">ROLLUP</option>' +
+              '<option value="MIGRATE">MIGRATE</option>' +
+              '<option value="BACKFILL">BACKFILL</option>' +
+            '</select>' +
+          '</label>' +
+          '<label style="font-size:11px">Cron<br>' +
+            '<input type="text" id="ae-cron-' + uid + '" placeholder="0 */12 * * *" style="background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:5px 6px;border-radius:4px;font-family:monospace;width:140px">' +
+          '</label>' +
+          '<label style="font-size:11px">TZ<br>' +
+            '<input type="text" id="ae-tz-' + uid + '" value="America/Chicago" style="background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:5px 6px;border-radius:4px;width:140px">' +
+          '</label>' +
+          '<button class="btn btn-small" onclick="addEndpointToProject(\'' + escapeAttr(uid) + '\')">＋ Add endpoint</button>' +
+        '</div>'
+      );
+    }
+
+    function renderAddBrandForm(p){
+      if (!p) return '';
+      const uid = p.ProjectUID;
+      const cached = projectDetailsCache.get(uid);
+      const attached = new Set();
+      if (cached) for (const pb of cached.brands || []) attached.add(String(pb.BrandUID).toLowerCase());
+
+      const candidates = brandCatalogCache.filter(b => !attached.has(String(b.BrandUID).toLowerCase()) && b.IsActive !== false);
+      const opts = candidates.length
+        ? candidates.map(b => '<option value="' + escape(b.BrandUID) + '">' + escape(b.BrandName || b.BrandUID) + '</option>').join('')
+        : '<option value="">— all brands already attached —</option>';
+
+      return (
+        '<div style="margin-top:10px;padding:10px;background:rgba(255,255,255,.02);border:1px dashed var(--border);border-radius:6px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">' +
+          '<label style="font-size:11px">Brand<br>' +
+            '<select id="ab-brand-' + uid + '" style="background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:5px 6px;border-radius:4px;min-width:260px"' + (candidates.length ? '' : ' disabled') + '>' + opts + '</select>' +
+          '</label>' +
+          '<button class="btn btn-small" onclick="addBrandToProject(\'' + escapeAttr(uid) + '\')"' + (candidates.length ? '' : ' disabled') + '>＋ Add brand</button>' +
+        '</div>'
+      );
+    }
+
+    function renderProjectDangerZone(p){
+      if (!p) return '';
+      const uid = p.ProjectUID;
+      return (
+        '<div style="padding:10px 16px;border-top:1px solid var(--border);background:rgba(239,68,68,.04)">' +
+          '<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#fca5a5;margin-bottom:6px">Danger zone</div>' +
+          '<div style="display:flex;gap:8px;align-items:center">' +
+            '<span style="font-size:12px;color:var(--text-muted);flex:1">Deletes the project and removes all member endpoints + brands. All managed jobs are soft-deleted (paused + un-managed, run history kept).</span>' +
+            '<button class="btn btn-small" style="background:rgba(239,68,68,.15);color:#fca5a5;border:1px solid rgba(239,68,68,.3)" onclick="deleteProject(\'' + escapeAttr(uid) + '\',\'' + escapeAttr(p.Name || '') + '\')">Delete project</button>' +
+          '</div>' +
+        '</div>'
+      );
+    }
+
+    function renderCreateProjectForm(){
+      return (
+        '<div class="card" style="padding:14px 16px;background:rgba(99,102,241,.04);border:1px solid rgba(99,102,241,.3)">' +
+          '<div style="font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:#a5b4fc;margin-bottom:10px">New project</div>' +
+          '<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px">' +
+            '<label>Name (required, unique)<br><input type="text" id="np-name" placeholder="e.g. Walmart Hourly Inventory" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px"></label>' +
+            '<label>Display name<br><input type="text" id="np-display" placeholder="optional, prettier label" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px"></label>' +
+            '<label>Connector scope<br><input type="text" id="np-scope" placeholder="e.g. AMAZON_SP_API or empty for cross" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px"></label>' +
+            '<label>Sort order<br><input type="number" id="np-sort" value="100" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px"></label>' +
+            '<label style="grid-column:1 / -1">Description<br><textarea id="np-desc" rows="2" style="width:100%;background:var(--surface-2,#1e1e2e);border:1px solid var(--border);color:var(--text);padding:6px 8px;border-radius:4px;font-family:inherit;resize:vertical"></textarea></label>' +
+          '</div>' +
+          '<div style="margin-top:10px;display:flex;gap:8px">' +
+            '<button class="btn btn-small" onclick="submitCreateProject()">Create</button>' +
+            '<button class="btn btn-small btn-secondary" onclick="cancelCreateProject()">Cancel</button>' +
+            '<span style="flex:1"></span>' +
+            '<span style="color:var(--text-dim);font-size:11px">Empty project after create — add endpoints + brands from the card.</span>' +
+          '</div>' +
+        '</div>'
+      );
+    }
+
+    /* ---------- v2 mutation functions ---------- */
+
+    async function toggleProjectEditMode(uid){
+      if (editingProjects.has(uid)) {
+        editingProjects.delete(uid);
+      } else {
+        editingProjects.add(uid);
+        // Lazy-load catalogs the first time anyone enters edit mode.
+        await ensureCatalogsLoaded();
+        // Make sure detail is loaded so the editor renders against real data.
+        if (!projectDetailsCache.has(uid)) await loadProjectDetail(uid);
+      }
+      renderProjects();
+    }
+
+    function startCreateProject(){ creatingProject = true; renderProjects(); setTimeout(() => document.getElementById('np-name')?.focus(), 0); }
+    function cancelCreateProject(){ creatingProject = false; renderProjects(); }
+
+    async function submitCreateProject(){
+      const name           = document.getElementById('np-name')?.value.trim();
+      const displayName    = document.getElementById('np-display')?.value.trim();
+      const connectorScope = document.getElementById('np-scope')?.value.trim();
+      const sortOrder      = parseInt(document.getElementById('np-sort')?.value || '100', 10);
+      const description    = document.getElementById('np-desc')?.value.trim();
+      if (!name) { alertError('Name is required.'); return; }
+      try {
+        await window._SKCAdmin.api('POST', '/api/projects', { name, displayName, connectorScope, description, sortOrder });
+        creatingProject = false;
+        await loadProjects();
+      } catch (e) { alertError('Create failed: ' + e.message); }
+    }
+
+    async function saveProjectHeader(uid){
+      const name           = document.getElementById('ph-name-' + uid)?.value.trim();
+      const displayName    = document.getElementById('ph-display-' + uid)?.value;
+      const connectorScope = document.getElementById('ph-scope-' + uid)?.value.trim();
+      const description    = document.getElementById('ph-desc-' + uid)?.value;
+      const sortOrder      = parseInt(document.getElementById('ph-sort-' + uid)?.value || '100', 10);
+      const isActive       = !!document.getElementById('ph-active-' + uid)?.checked;
+      if (!name) { alertError('Name cannot be empty.'); return; }
+      try {
+        await window._SKCAdmin.api('PATCH', '/api/projects/' + encodeURIComponent(uid),
+          { name, displayName, connectorScope, description, sortOrder, isActive });
+        // Force-reload detail so we see the post-sync state.
+        projectDetailsCache.delete(uid);
+        await Promise.all([ loadProjects(), loadProjectDetail(uid) ]);
+      } catch (e) { alertError('Save failed: ' + e.message); }
+    }
+
+    async function deleteProject(uid, name){
+      if (!confirm('Delete project "' + (name || uid) + '"?\n\nAll member endpoints + brands are removed. Managed jobs are paused + un-managed (run history kept). This cannot be undone via the UI.')) return;
+      try {
+        await window._SKCAdmin.api('DELETE', '/api/projects/' + encodeURIComponent(uid));
+        editingProjects.delete(uid);
+        expandedProjects.delete(uid);
+        projectDetailsCache.delete(uid);
+        await loadProjects();
+      } catch (e) { alertError('Delete failed: ' + e.message); }
+    }
+
+    async function addEndpointToProject(uid){
+      const endpointID = parseInt(document.getElementById('ae-endpoint-' + uid)?.value || '0', 10);
+      const jobType    = document.getElementById('ae-jobtype-' + uid)?.value || 'INGEST';
+      const cron       = document.getElementById('ae-cron-' + uid)?.value.trim() || null;
+      const tz         = document.getElementById('ae-tz-' + uid)?.value.trim()   || 'America/Chicago';
+      if (!endpointID) { alertError('Pick an endpoint.'); return; }
+      try {
+        await window._SKCAdmin.api('POST', '/api/projects/' + encodeURIComponent(uid) + '/endpoints',
+          { endpointID, jobType, cronExpression: cron, timezoneIANA: tz });
+        projectDetailsCache.delete(uid);
+        await Promise.all([ loadProjects(), loadProjectDetail(uid) ]);
+      } catch (e) { alertError('Add endpoint failed: ' + e.message); }
+    }
+
+    async function saveProjectEndpoint(uid, peID){
+      const cron     = document.getElementById('pe-cron-' + peID)?.value.trim() || null;
+      const tz       = document.getElementById('pe-tz-' + peID)?.value.trim()   || 'America/Chicago';
+      const isActive = !!document.getElementById('pe-active-' + peID)?.checked;
+      try {
+        await window._SKCAdmin.api('PATCH', '/api/projects/' + encodeURIComponent(uid) + '/endpoints/' + peID,
+          { cronExpression: cron, timezoneIANA: tz, isActive });
+        projectDetailsCache.delete(uid);
+        await Promise.all([ loadProjects(), loadProjectDetail(uid) ]);
+      } catch (e) { alertError('Save endpoint failed: ' + e.message); }
+    }
+
+    async function removeProjectEndpoint(uid, peID, name){
+      if (!confirm('Remove endpoint "' + (name || peID) + '" from this project?\n\nManaged jobs for this endpoint are paused + un-managed (run history kept).')) return;
+      try {
+        await window._SKCAdmin.api('DELETE', '/api/projects/' + encodeURIComponent(uid) + '/endpoints/' + peID);
+        projectDetailsCache.delete(uid);
+        await Promise.all([ loadProjects(), loadProjectDetail(uid) ]);
+      } catch (e) { alertError('Remove endpoint failed: ' + e.message); }
+    }
+
+    async function addBrandToProject(uid){
+      const brandUID = document.getElementById('ab-brand-' + uid)?.value;
+      if (!brandUID) { alertError('Pick a brand.'); return; }
+      try {
+        await window._SKCAdmin.api('POST', '/api/projects/' + encodeURIComponent(uid) + '/brands', { brandUID });
+        projectDetailsCache.delete(uid);
+        await Promise.all([ loadProjects(), loadProjectDetail(uid) ]);
+      } catch (e) { alertError('Add brand failed: ' + e.message); }
+    }
+
+    async function removeProjectBrand(uid, pbID, name){
+      if (!confirm('Remove brand "' + (name || pbID) + '" from this project?\n\nManaged jobs for this brand are paused + un-managed (run history kept).')) return;
+      try {
+        await window._SKCAdmin.api('DELETE', '/api/projects/' + encodeURIComponent(uid) + '/brands/' + pbID);
+        projectDetailsCache.delete(uid);
+        await Promise.all([ loadProjects(), loadProjectDetail(uid) ]);
+      } catch (e) { alertError('Remove brand failed: ' + e.message); }
     }
 
     /* ---------- Endpoint cards (grouped by connector source) ---------- */
