@@ -181,11 +181,43 @@ router.get('/:projectUID', async (req, res) => {
         ORDER BY e.Name ASC, b.BrandName ASC
       `);
 
+    /* Drift candidates: Jobs that share (EndpointID, JobType) with one of this
+       project's PEs but are NOT project-managed. These are jobs that *could*
+       be project members but currently use a different cron (or no project
+       affiliation). Surface them in the UI so operators can see + reconcile. */
+    const driftQ = await pool.request()
+      .input('pid', sql.Int, project.ProjectID)
+      .query(`
+        SELECT j.JobID, j.JobUID, j.Name AS JobName, j.JobType,
+               j.CronExpression AS JobCron, j.TimezoneIANA AS JobTZ,
+               j.IsActive, j.LastRunAt, j.LastRunStatus,
+               j.BrandUID, b.BrandName,
+               e.EndpointID, e.Name AS EndpointName, e.DisplayName AS EndpointDisplay,
+               pe.ProjectEndpointID, pe.CronExpression AS ProjectCron, pe.TimezoneIANA AS ProjectTZ,
+               CASE
+                 WHEN j.ManagedByProjectID IS NOT NULL AND j.ManagedByProjectID <> @pid
+                   THEN 'managed-by-other-project'
+                 WHEN ISNULL(j.CronExpression,'') <> ISNULL(pe.CronExpression,'')
+                   THEN 'cron-divergence'
+                 ELSE 'unmanaged-but-eligible'
+               END AS DriftReason
+        FROM admin.Jobs j
+        JOIN admin.Endpoints e ON e.EndpointID = j.EndpointID
+        LEFT JOIN admin.Brands b ON b.BrandUID = j.BrandUID
+        JOIN admin.ProjectEndpoints pe
+          ON pe.ProjectID  = @pid
+         AND pe.EndpointID = j.EndpointID
+         AND pe.JobType    = j.JobType
+        WHERE (j.ManagedByProjectID IS NULL OR j.ManagedByProjectID <> @pid)
+        ORDER BY e.Name ASC, b.BrandName ASC
+      `);
+
     res.json({
       project,
-      endpoints: endpointsQ.recordset,
-      brands:    brandsQ.recordset,
-      jobs:      jobsQ.recordset,
+      endpoints:       endpointsQ.recordset,
+      brands:          brandsQ.recordset,
+      jobs:            jobsQ.recordset,
+      driftCandidates: driftQ.recordset,
     });
   } catch (e) {
     console.error('[projects/detail]', e);

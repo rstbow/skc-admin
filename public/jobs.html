@@ -728,6 +728,7 @@
       const eps    = d.endpoints || [];
       const brands = d.brands    || [];
       const jobs   = d.jobs      || [];
+      const drift  = d.driftCandidates || [];
       const uid    = d.project?.ProjectUID;
 
       const epRows = eps.length ? eps.map(e => (
@@ -824,6 +825,7 @@
           '<div style="' + headerStyle + '">Materialized jobs (' + jobs.length + ')</div>' +
           '<table style="' + tableStyle + '"><tbody>' + jobRows + '</tbody></table>' +
         '</div>' +
+        renderDriftSection(drift, sectionStyle, headerStyle, tableStyle) +
         dangerZone +
         (editMode
           ? '<div style="padding:10px 16px;border-top:1px solid var(--border);background:rgba(99,102,241,.05);color:var(--text-muted);font-size:11px">' +
@@ -832,6 +834,46 @@
           : '<div style="padding:10px 16px;border-top:1px solid var(--border);background:rgba(255,255,255,.02);color:var(--text-dim);font-size:11px">' +
               'Read-only view. Click ✏️ Edit to change membership or settings.' +
             '</div>')
+      );
+    }
+
+    /* ---------- Drift detector ----------
+       Jobs that match this project's endpoints but aren't project-managed
+       (custom cron, or managed by some other project). Surface so operator
+       can see + reconcile. */
+    function renderDriftSection(drift, sectionStyle, headerStyle, tableStyle){
+      if (!drift || !drift.length) return '';
+      const rows = drift.map(r => {
+        const reasonLabel =
+            r.DriftReason === 'cron-divergence'           ? '<span style="color:#fbbf24;font-size:11px">⚠ custom cron</span>'
+          : r.DriftReason === 'managed-by-other-project'  ? '<span style="color:#a5b4fc;font-size:11px">↗ in another project</span>'
+          :                                                 '<span style="color:var(--text-dim);font-size:11px">eligible</span>';
+        return (
+          '<tr>' +
+            '<td style="padding:6px 10px"><strong>' + escape(r.EndpointDisplay || r.EndpointName) + '</strong>' +
+              '<div style="color:var(--text-dim);font-size:11px">' + escape(r.JobType) + '</div>' +
+            '</td>' +
+            '<td style="padding:6px 10px">' + escape(r.BrandName || '?') + '</td>' +
+            '<td style="padding:6px 10px;font-family:monospace;font-size:11px;color:var(--text-muted)">' +
+              (r.JobCron ? escape(r.JobCron) : '—') +
+              (r.JobCron && r.ProjectCron && r.JobCron !== r.ProjectCron
+                ? '<div style="color:var(--text-dim);font-size:10px">project: ' + escape(r.ProjectCron) + '</div>'
+                : '') +
+            '</td>' +
+            '<td style="padding:6px 10px">' + reasonLabel + '</td>' +
+            '<td style="padding:6px 10px;text-align:right">' + (r.IsActive
+                ? '<span style="color:var(--green);font-size:11px">on</span>'
+                : '<span style="color:var(--text-dim);font-size:11px">paused</span>') +
+            '</td>' +
+          '</tr>'
+        );
+      }).join('');
+      return (
+        '<div style="' + sectionStyle + ';border-top:1px solid var(--border);background:rgba(251,191,36,.04)">' +
+          '<div style="' + headerStyle + '">Drift detected (' + drift.length + ')</div>' +
+          '<div style="color:var(--text-muted);font-size:11px;margin-bottom:8px">Jobs that use this project\'s endpoints but aren\'t project-managed. Add the brand to the project (will materialize a fresh managed job with the project\'s cron) or change the job\'s cron to match. Each path is operator-decided.</div>' +
+          '<table style="' + tableStyle + '"><tbody>' + rows + '</tbody></table>' +
+        '</div>'
       );
     }
 
