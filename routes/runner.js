@@ -13,6 +13,7 @@ const { sql, getPool } = require('../config/db');
 const { verify } = require('../config/jwt');
 const { runAmazonFinancialEvents } = require('../lib/amazonFinancialEventsRunner');
 const { runBundle } = require('../lib/jobBundles');
+const { syncProject } = require('../lib/projectSync');
 const scheduler = require('../lib/scheduler');
 
 const router = express.Router();
@@ -191,6 +192,81 @@ const CONNECTOR_TO_BUNDLE = {
   QBO:           'quickbooks-onboarding',
 };
 
+/* CONNECTOR_TO_PROJECT — Folder System v2 integration.
+   After the onboarding bundle creates kickoff Jobs, the brand is auto-added
+   to the matching standing Project so the recurring Jobs become project-
+   managed (sync engine claims the orphan Jobs the bundle just created).
+   Bundle handles the kickoff burst (FIRE_NOW / FIRE_DELAYED / PROVISION_BACKFILL);
+   Project takes over for the steady-state daily cadence. */
+const CONNECTOR_TO_PROJECT = {
+  AMAZON_SP_API: 'Amazon Daily',
+  WALMART:       'Walmart Daily',
+  // SHOPIFY / QBO: add when their daily projects exist.
+};
+
+/**
+ * Add a brand to a Project's ProjectBrands (idempotent), then trigger a
+ * sync so any orphan Jobs from a freshly-run bundle get claimed.
+ *
+ * Returns a small report shape for inclusion in the onboarding response.
+ * Failures are caught and surfaced as warnings — don't fail the whole
+ * onboard call if the project bit doesn't apply or a project is missing.
+ */
+async function addBrandToConnectorProject(brandUID, connector, triggeredBy) {
+  const projectName = CONNECTOR_TO_PROJECT[connector];
+  if (!projectName) {
+    return { added: false, reason: 'no-project-mapping-for-connector', connector };
+  }
+
+  try {
+    const pool = await getPool();
+    const r = await pool.request()
+      .input('n', sql.NVarChar(100), projectName)
+      .query('SELECT ProjectID FROM admin.Projects WHERE Name = @n AND IsActive = 1');
+    if (!r.recordset.length) {
+      return { added: false, reason: 'project-not-found-or-inactive', projectName };
+    }
+    const projectID = r.recordset[0].ProjectID;
+
+    // Idempotent membership insert.
+    const ins = await pool.request()
+      .input('pid', sql.Int,              projectID)
+      .input('b',   sql.UniqueIdentifier, brandUID)
+      .query(`
+        IF NOT EXISTS (SELECT 1 FROM admin.ProjectBrands WHERE ProjectID = @pid AND BrandUID = @b)
+        BEGIN
+          INSERT INTO admin.ProjectBrands (ProjectID, BrandUID, IsActive)
+          VALUES (@pid, @b, 1);
+          SELECT 1 AS inserted;
+        END
+        ELSE
+        BEGIN
+          SELECT 0 AS inserted;
+        END
+      `);
+    const wasNew = ins.recordset && ins.recordset[0] && ins.recordset[0].inserted === 1;
+
+    // Sync — claim-orphan logic in projectSync will adopt the bundle-created
+    // Jobs into the project on this pass.
+    const sync = await syncProject({ projectID, triggeredBy: triggeredBy || 'onboard-hook' });
+
+    return {
+      added:        wasNew,
+      alreadyMember: !wasNew,
+      projectName,
+      projectID,
+      sync: {
+        added:    sync.added.length,
+        claimed:  sync.claimed?.length || 0,
+        updated:  sync.updated.length,
+        orphaned: sync.orphaned.length,
+      },
+    };
+  } catch (e) {
+    return { added: false, reason: 'project-add-failed', error: e.message, projectName };
+  }
+}
+
 router.post('/onboard-brand-jobs', async (req, res) => {
   try {
     const { brandUID, connector, fireInitial = true, includeBackfill = true } = req.body || {};
@@ -228,6 +304,14 @@ router.post('/onboard-brand-jobs', async (req, res) => {
 
     const initialFires = fireInitial ? result.fired : [];
 
+    // Folder System v2: also add the brand to the matching standing
+    // Project. Sync engine's claim-orphan logic will adopt the Jobs the
+    // bundle just created, making them project-managed. Best-effort —
+    // never fail the onboard call if the project step has issues.
+    const projectMembership = await addBrandToConnectorProject(
+      brandUID, connector, req.user.isServiceToken ? 'ONBOARD' : 'MANUAL'
+    );
+
     return res.status(201).json({
       brandUID,
       brandName:    result.brandName,
@@ -236,6 +320,7 @@ router.post('/onboard-brand-jobs', async (req, res) => {
       created,
       skipped:      result.skipped,
       initialFires,
+      projectMembership,
       warnings:     result.warnings && result.warnings.length ? result.warnings : undefined,
       instructions: 'Poll /api/jobs/:jobID for status. Listings runner takes 5-15 min to populate raw.amz_listings; rank runner kicks off 5 min after.',
     });
