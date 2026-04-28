@@ -62,6 +62,8 @@
   .status-dot.success{background:var(--green);box-shadow:0 0 6px rgba(34,197,94,.5)}
   .status-dot.failed{background:var(--red);box-shadow:0 0 6px rgba(239,68,68,.5)}
   .status-dot.running{background:var(--blue);animation:pulse 1.4s infinite}
+  .loading-spinner{display:inline-block;width:12px;height:12px;border:2px solid rgba(96,165,250,.25);border-top-color:var(--blue);border-radius:50%;animation:spin 0.8s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes spin{to{transform:rotate(360deg)}}
   .status-dot.paused{background:var(--text-dim)}
   .status-dot.new{background:var(--border-strong)}
   @keyframes pulse{0%,100%{opacity:1;box-shadow:0 0 6px rgba(96,165,250,.8)}50%{opacity:.5;box-shadow:0 0 2px rgba(96,165,250,.3)}}
@@ -244,13 +246,15 @@
         </div>
       </div>
 
-      <!-- Project (folder) view — Folder System v1 (read-only) -->
+      <!-- Project (folder) view — Folder System v2 -->
       <div id="projectView" style="display:none">
         <div class="card">
           <div class="toolbar">
             <input id="projectSearchInput" type="search" placeholder="Search projects…" oninput="renderProjects()">
             <span style="flex:1"></span>
-            <span id="projectCount" style="color:var(--text-muted);font-size:12px"></span>
+            <button class="btn btn-secondary btn-small" onclick="expandAllProjects(true)">Expand all</button>
+            <button class="btn btn-secondary btn-small" onclick="expandAllProjects(false)">Collapse all</button>
+            <span id="projectCount" style="color:var(--text-muted);font-size:12px;margin-left:8px"></span>
           </div>
           <div id="projectContainer"></div>
         </div>
@@ -607,6 +611,31 @@
       }
     }
 
+    /* ---------- Expand-all / collapse-all ---------- */
+    function expandAllProjects(expand){
+      if (expand) {
+        const search = (document.getElementById('projectSearchInput')?.value || '').toLowerCase().trim();
+        const visible = projectsCache.filter(p => {
+          if (!search) return true;
+          const hay = ((p.Name || '') + ' ' + (p.DisplayName || '') + ' ' +
+                       (p.ConnectorScope || '') + ' ' + (p.Description || '')).toLowerCase();
+          return hay.includes(search);
+        });
+        for (const p of visible) {
+          if (!expandedProjects.has(p.ProjectUID)) {
+            expandedProjects.add(p.ProjectUID);
+            if (!projectDetailsCache.has(p.ProjectUID)) {
+              // fire-and-forget; renderProjects re-runs as each detail lands
+              loadProjectDetail(p.ProjectUID);
+            }
+          }
+        }
+      } else {
+        expandedProjects.clear();
+      }
+      renderProjects();
+    }
+
     function setView(v){
       currentView = v;
       document.getElementById('endpointView').style.display = v === 'endpoint' ? '' : 'none';
@@ -745,7 +774,7 @@
       if (expanded) {
         const cached = projectDetailsCache.get(uid);
         if (!cached) {
-          detail = '<div class="empty" style="padding:14px">Loading project detail…</div>';
+          detail = '<div class="empty" style="padding:18px;color:var(--text-muted);font-size:13px"><span class="loading-spinner"></span>Loading project detail…</div>';
         } else {
           detail = renderProjectDetailBody(cached, editing);
         }
@@ -791,6 +820,21 @@
       const drift  = d.driftCandidates || [];
       const uid    = d.project?.ProjectUID;
 
+      const epEmpty = '<tr><td colspan="4" class="empty" style="padding:14px;color:var(--text-muted);font-size:12px;line-height:1.5">' +
+        '<div style="font-weight:600;color:var(--text)">📂 No endpoints in this folder yet.</div>' +
+        '<div>Endpoints define <em>what</em> this folder runs (e.g. AMZ_LISTINGS_READ, AMZ_FINANCIAL_EVENTS).</div>' +
+        '<div>Click <strong>✏️ Edit</strong> on the card header, then <strong>＋ Add endpoint</strong> below.</div>' +
+        '</td></tr>';
+      const brandEmpty = '<tr><td colspan="3" class="empty" style="padding:14px;color:var(--text-muted);font-size:12px;line-height:1.5">' +
+        '<div style="font-weight:600;color:var(--text)">🏷️ No brands attached yet.</div>' +
+        '<div>Brands are <em>who</em> this folder runs for. Each member brand × each endpoint materializes one job.</div>' +
+        '<div>Click <strong>✏️ Edit</strong> then <strong>＋ Add brand</strong> below.</div>' +
+        '</td></tr>';
+      const jobEmpty = '<tr><td colspan="5" class="empty" style="padding:14px;color:var(--text-muted);font-size:12px;line-height:1.5">' +
+        '<div style="font-weight:600;color:var(--text)">⚙️ No materialized jobs yet.</div>' +
+        '<div>Jobs materialize automatically when this folder has <em>at least one endpoint AND at least one brand</em>. Sync engine handles it.</div>' +
+        '</td></tr>';
+
       const epRows = eps.length ? eps.map(e => (
         '<tr>' +
           '<td style="padding:6px 10px"><strong>' + escape(e.EndpointDisplay || e.EndpointName) + '</strong>' +
@@ -814,7 +858,7 @@
               '</td>'
           ) +
         '</tr>'
-      )).join('') : '<tr><td colspan="4" class="empty" style="padding:10px">No endpoints attached yet.</td></tr>';
+      )).join('') : epEmpty;
 
       const brandRows = brands.length ? brands.map(b => (
         '<tr>' +
@@ -828,7 +872,7 @@
             (editMode ? ' <button class="btn btn-small btn-secondary" onclick="removeProjectBrand(\'' + escapeAttr(uid) + '\',' + b.ProjectBrandID + ',\'' + escapeAttr(b.BrandName || '') + '\')">Remove</button>' : '') +
           '</td>' +
         '</tr>'
-      )).join('') : '<tr><td colspan="3" class="empty" style="padding:10px">No brands attached yet.</td></tr>';
+      )).join('') : brandEmpty;
 
       const jobRows = jobs.length ? jobs.map(j => {
         const statusColor =
@@ -857,7 +901,7 @@
             '</td>' +
           '</tr>'
         );
-      }).join('') : '<tr><td colspan="5" class="empty" style="padding:10px">No materialized jobs yet. Brand membership + endpoints will materialize jobs in v2.</td></tr>';
+      }).join('') : jobEmpty;
 
       const sectionStyle = 'padding:14px 16px';
       const headerStyle  = 'font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-muted);margin-bottom:8px';
