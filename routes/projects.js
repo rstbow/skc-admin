@@ -61,8 +61,9 @@ function asInt(v, fallback = null) {
 }
 
 /* ---------- LIST ----------
-   Returns active Projects with aggregate counts. Used by the folder-tree
-   left rail in /jobs.html. */
+   Returns active Projects with aggregate counts + a per-project health
+   rollup that the folder-tree UI uses to render status pills without
+   needing to expand each folder. */
 router.get('/', async (_req, res) => {
   try {
     const pool = await getPool();
@@ -85,7 +86,23 @@ router.get('/', async (_req, res) => {
         (SELECT COUNT(*) FROM admin.Jobs j
           WHERE j.ManagedByProjectID = p.ProjectID)                     AS ManagedJobCount,
         (SELECT COUNT(*) FROM admin.Jobs j
-          WHERE j.ManagedByProjectID = p.ProjectID AND j.IsActive = 1)  AS ActiveManagedJobCount
+          WHERE j.ManagedByProjectID = p.ProjectID
+            AND j.IsActive = 1)                                         AS ActiveManagedJobCount,
+        (SELECT COUNT(*) FROM admin.Jobs j
+          WHERE j.ManagedByProjectID = p.ProjectID
+            AND j.LastRunStatus = 'FAILED')                             AS FailedJobCount,
+        (SELECT COUNT(*) FROM admin.Jobs j
+          WHERE j.ManagedByProjectID = p.ProjectID
+            AND j.LastRunStatus = 'RUNNING')                            AS RunningJobCount,
+        (SELECT COUNT(*) FROM admin.Jobs j
+          WHERE j.ManagedByProjectID = p.ProjectID
+            AND j.IsActive = 0)                                         AS PausedJobCount,
+        (SELECT COUNT(*) FROM admin.Jobs j
+          WHERE j.ManagedByProjectID = p.ProjectID
+            AND ISNULL(j.ConsecutiveFailures, 0) > 0)                   AS WarningJobCount,
+        (SELECT COUNT(*) FROM admin.Jobs j
+          WHERE j.ManagedByProjectID = p.ProjectID
+            AND j.LastRunStatus IS NULL)                                AS NeverRunJobCount
       FROM admin.Projects p
       WHERE p.IsActive = 1
       ORDER BY p.SortOrder ASC, p.Name ASC

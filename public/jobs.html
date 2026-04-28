@@ -662,6 +662,59 @@
       host.innerHTML = html;
     }
 
+    /* ---------- Project status rollup pill ----------
+       Computes a single at-a-glance health indicator for a project's
+       materialized jobs. Order of precedence (highest priority wins):
+         empty   - no managed jobs at all
+         broken  - half or more of the managed jobs failed on last run
+         paused  - all managed jobs are IsActive=0
+         warn    - any FAILED, paused, or consecutive-failure ticking
+         running - at least one job currently RUNNING (and otherwise healthy)
+         ready   - jobs exist but none have run yet (fresh after retrofit)
+         healthy - everything else
+    */
+    function renderProjectStatusPill(c){
+      const { jCount, jActive, jFailed, jRunning, jPaused, jWarn, jNew } = c;
+
+      if (jCount === 0) {
+        return statusPillHtml('▢ empty', 'var(--text-dim)', 'rgba(148,163,184,.10)', 'rgba(148,163,184,.25)',
+          'No managed jobs yet — add endpoints + brands to materialize work.');
+      }
+      if (jFailed > 0 && (jFailed * 2 >= jCount)) {
+        return statusPillHtml('● broken', '#fca5a5', 'rgba(239,68,68,.15)', 'rgba(239,68,68,.35)',
+          jFailed + ' of ' + jCount + ' jobs failed on last run.');
+      }
+      if (jPaused === jCount && jCount > 0) {
+        return statusPillHtml('⏸ paused', 'var(--text-dim)', 'rgba(148,163,184,.10)', 'rgba(148,163,184,.25)',
+          'All ' + jCount + ' jobs paused.');
+      }
+      if (jFailed > 0 || jPaused > 0 || jWarn > 0) {
+        const bits = [];
+        if (jFailed > 0) bits.push(jFailed + ' failed');
+        if (jPaused > 0) bits.push(jPaused + ' paused');
+        if (jWarn   > 0) bits.push(jWarn   + ' warning');
+        return statusPillHtml('⚠ degraded', '#fbbf24', 'rgba(251,191,36,.10)', 'rgba(251,191,36,.30)',
+          bits.join(' · '));
+      }
+      if (jRunning > 0) {
+        return statusPillHtml('● running', '#60a5fa', 'rgba(96,165,250,.10)', 'rgba(96,165,250,.30)',
+          jRunning + ' of ' + jCount + ' currently running.');
+      }
+      if (jCount > 0 && jNew === jCount) {
+        return statusPillHtml('○ ready', '#a5b4fc', 'rgba(165,180,252,.10)', 'rgba(165,180,252,.30)',
+          'All ' + jCount + ' jobs materialized but none have run yet.');
+      }
+      return statusPillHtml('● healthy', 'var(--green)', 'rgba(34,197,94,.10)', 'rgba(34,197,94,.30)',
+        jActive + ' of ' + jCount + ' active, last runs clean.');
+    }
+
+    function statusPillHtml(label, fg, bg, border, tooltip){
+      return '<span title="' + escapeAttr(tooltip || '') + '" ' +
+             'style="background:' + bg + ';color:' + fg + ';border:1px solid ' + border + ';' +
+             'padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;white-space:nowrap">' +
+             escape(label) + '</span>';
+    }
+
     function renderProjectCard(p){
       const uid = p.ProjectUID;
       const expanded = expandedProjects.has(uid);
@@ -676,6 +729,12 @@
       const bCount   = p.BrandCount           || 0;
       const jCount   = p.ManagedJobCount      || 0;
       const jActive  = p.ActiveManagedJobCount|| 0;
+      const jFailed  = p.FailedJobCount       || 0;
+      const jRunning = p.RunningJobCount      || 0;
+      const jPaused  = p.PausedJobCount       || 0;
+      const jWarn    = p.WarningJobCount      || 0;
+      const jNew     = p.NeverRunJobCount     || 0;
+      const statusPill = renderProjectStatusPill({ jCount, jActive, jFailed, jRunning, jPaused, jWarn, jNew });
 
       const desc = p.Description
         ? '<div style="color:var(--text-muted);font-size:12px;margin-top:4px">' + escape(p.Description) + '</div>'
@@ -711,6 +770,7 @@
               '<div style="font-weight:600">' + display + internal + '</div>' +
               desc +
             '</div>' +
+            statusPill +
             scope +
             '<span style="display:flex;gap:10px;color:var(--text-muted);font-size:12px;white-space:nowrap">' +
               '<span title="Endpoints">📂 ' + eCount + '</span>' +
