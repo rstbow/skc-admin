@@ -46,15 +46,18 @@ router.get('/', async (req, res) => {
 
     const r = await reqDb.query(`
       SELECT TOP (@limit) r.Run_UID, r.Tenant_UID, r.Agent_UID,
-             r.StartTime, r.EndTime, r.Status, r.Summary,
-             r.ErrorNumber, r.ErrorLine, r.ErrorProcedure, r.ErrorMessage,
-             a.Name AS AgentName,
-             rec.Name AS RecipeName, rec.Version AS RecipeVersion
+             r.StartedAt, r.EndedAt, r.DurationMs, r.Status,
+             JSON_VALUE(r.Output, '$.summary') AS Summary,
+             r.Output, r.TriggeredBy,
+             r.ErrorMessage, r.ErrorFingerprint,
+             a.DisplayName  AS AgentName,
+             rec.RecipeKey  AS RecipeName,
+             rec.DisplayName AS RecipeDisplayName
       FROM air.AgentRuns r
       INNER JOIN air.Agents        a   ON a.Agent_UID    = r.Agent_UID
       INNER JOIN air.AgentRecipes  rec ON rec.Recipe_UID = a.Recipe_UID
       WHERE ${where}
-      ORDER BY r.StartTime DESC
+      ORDER BY r.StartedAt DESC
     `);
     res.json({ runs: r.recordset });
   } catch (e) {
@@ -72,11 +75,13 @@ router.get('/:runUID', async (req, res) => {
       .input('r', sql.UniqueIdentifier, req.params.runUID)
       .query(`
         SELECT r.Run_UID, r.Tenant_UID, r.Agent_UID,
-               r.StartTime, r.EndTime, r.Status, r.Summary,
-               r.ErrorNumber, r.ErrorLine, r.ErrorProcedure, r.ErrorMessage,
-               r.Metadata,
-               a.Name AS AgentName,
-               rec.Name AS RecipeName, rec.Version AS RecipeVersion
+               r.StartedAt, r.EndedAt, r.DurationMs, r.Status,
+               JSON_VALUE(r.Output, '$.summary') AS Summary,
+               r.Output, r.TriggeredBy, r.WorkerHost, r.WorkerType,
+               r.ErrorMessage, r.ErrorFingerprint,
+               a.DisplayName  AS AgentName,
+               rec.RecipeKey  AS RecipeName,
+               rec.DisplayName AS RecipeDisplayName
         FROM air.AgentRuns r
         INNER JOIN air.Agents        a   ON a.Agent_UID      = r.Agent_UID
         INNER JOIN air.AgentRecipes  rec ON rec.Recipe_UID = a.Recipe_UID
@@ -90,7 +95,7 @@ router.get('/:runUID', async (req, res) => {
       .input('t', sql.UniqueIdentifier, req.tenantUID)
       .input('r', sql.UniqueIdentifier, req.params.runUID)
       .query(`
-        SELECT LogID, Run_UID, LogLevel, LogTime, Message, Metadata
+        SELECT LogID, Run_UID, [Level], LogTime, Message, Detail
         FROM air.AgentRunLog
         WHERE Tenant_UID = @t AND Run_UID = @r
         ORDER BY LogTime, LogID

@@ -35,15 +35,19 @@ router.get('/', async (req, res) => {
     const r = await pool.request()
       .input('t', sql.UniqueIdentifier, req.tenantUID)
       .query(`
-        SELECT a.Agent_UID, a.Tenant_UID, a.Recipe_UID, a.Name,
-               a.CronExpression, a.TimezoneIANA, a.Params, a.Priority,
-               a.IsActive, a.CreatedAt, a.UpdatedAt,
-               r.Name AS RecipeName, r.Version AS RecipeVersion,
-               r.Description AS RecipeDescription
+        SELECT a.Agent_UID, a.Tenant_UID, a.Recipe_UID, a.Brand_UID,
+               a.DisplayName, a.CronExpression, a.TimezoneIANA, a.Params,
+               a.Priority, a.IsActive, a.NextRunAt, a.LastRunAt, a.LastRunStatus,
+               a.ConsecutiveFailures, a.CreatedAt, a.UpdatedAt,
+               r.RecipeKey      AS RecipeName,
+               r.DisplayName    AS RecipeDisplayName,
+               r.Description    AS RecipeDescription,
+               r.Category       AS RecipeCategory,
+               r.DefaultCron    AS RecipeDefaultCron
         FROM air.Agents a
         INNER JOIN air.AgentRecipes r ON r.Recipe_UID = a.Recipe_UID
         WHERE a.Tenant_UID = @t
-        ORDER BY a.Name
+        ORDER BY a.DisplayName
       `);
     res.json({ agents: r.recordset });
   } catch (e) {
@@ -59,12 +63,16 @@ router.get('/:agentUID', async (req, res) => {
       .input('t', sql.UniqueIdentifier, req.tenantUID)
       .input('b', sql.UniqueIdentifier, req.params.agentUID)
       .query(`
-        SELECT a.Agent_UID, a.Tenant_UID, a.Recipe_UID, a.Name,
-               a.CronExpression, a.TimezoneIANA, a.Params, a.Priority,
-               a.IsActive, a.CreatedAt, a.UpdatedAt,
-               r.Name AS RecipeName, r.Version AS RecipeVersion,
-               r.Description AS RecipeDescription,
-               r.DefaultCron, r.DefaultTimezone, r.DefaultParams, r.DefaultPriority
+        SELECT a.Agent_UID, a.Tenant_UID, a.Recipe_UID, a.Brand_UID,
+               a.DisplayName, a.CronExpression, a.TimezoneIANA, a.Params,
+               a.Priority, a.IsActive, a.NextRunAt, a.LastRunAt, a.LastRunStatus,
+               a.ConsecutiveFailures, a.CreatedAt, a.UpdatedAt,
+               r.RecipeKey      AS RecipeName,
+               r.DisplayName    AS RecipeDisplayName,
+               r.Description    AS RecipeDescription,
+               r.Category       AS RecipeCategory,
+               r.DefaultCron    AS RecipeDefaultCron,
+               r.ParamsSchema
         FROM air.Agents a
         INNER JOIN air.AgentRecipes r ON r.Recipe_UID = a.Recipe_UID
         WHERE a.Tenant_UID = @t AND a.Agent_UID = @b
