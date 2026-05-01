@@ -87,4 +87,60 @@ async function getStagingPool() {
   return _stagingPool;
 }
 
-module.exports = { sql, getPool, getStagingPool };
+/**
+ * AIR_Bots DB pool (vs-ims.AIR_Bots) — the multi-tenant data plane for
+ * AIR Bots. Schema lives at AIR_Bots.air.* (Tenants, TenantBrands,
+ * AgentRecipes, Agents, AgentRuns, AgentRunLog) per Chip's blessed
+ * design. RLS is enforced via `air.fn_TenantPredicate` + Security
+ * Policy on 5 tables (NOT AgentRecipes).
+ *
+ * Env vars (all required):
+ *   AIR_BOTS_DB_SERVER   — defaults to ADMIN_DB_SERVER (same Azure SQL server)
+ *   AIR_BOTS_DB_DATABASE — defaults to 'AIR_Bots'
+ *   AIR_BOTS_DB_USER     — REQUIRED (the runner login Chip provisions in
+ *                          his pending GRANT INSERT bundle; until that
+ *                          bundle ships, can be SA / db_owner)
+ *   AIR_BOTS_DB_PASSWORD — REQUIRED
+ *
+ * RLS interaction:
+ *   - Routes/runner running as db_owner bypass RLS via the predicate's
+ *     IS_ROLEMEMBER(N'db_owner') = 1 clause (added in artifact 08).
+ *   - For v0.2 multi-tenant, the runner sets sp_set_session_context
+ *     @key='tenant_uid' before each agent run to enforce per-tenant
+ *     visibility under non-db_owner login.
+ */
+let _airBotsPool = null;
+
+async function getAirBotsPool() {
+  if (_airBotsPool && _airBotsPool.connected) return _airBotsPool;
+
+  if (!process.env.AIR_BOTS_DB_USER || !process.env.AIR_BOTS_DB_PASSWORD) {
+    throw new Error(
+      'AIR_Bots DB pool not configured — set AIR_BOTS_DB_USER and AIR_BOTS_DB_PASSWORD ' +
+      'env vars on the App Service. Use a login with db_datareader + db_datawriter ' +
+      'on AIR_Bots (or db_owner for v0.1 with the RLS bypass clause active).'
+    );
+  }
+
+  const config = {
+    server:   process.env.AIR_BOTS_DB_SERVER   || process.env.ADMIN_DB_SERVER,
+    database: process.env.AIR_BOTS_DB_DATABASE || 'AIR_Bots',
+    user:     process.env.AIR_BOTS_DB_USER,
+    password: process.env.AIR_BOTS_DB_PASSWORD,
+    options: {
+      encrypt: (process.env.AIR_BOTS_DB_ENCRYPT ?? process.env.ADMIN_DB_ENCRYPT ?? 'true') === 'true',
+      trustServerCertificate: (process.env.AIR_BOTS_DB_TRUST_CERT ?? process.env.ADMIN_DB_TRUST_CERT ?? 'false') === 'true',
+      enableArithAbort: true,
+    },
+    pool: { max: 5, min: 0, idleTimeoutMillis: 30000 },
+    requestTimeout: 30000,
+    connectionTimeout: 30000,
+  };
+
+  _airBotsPool = new sql.ConnectionPool(config);
+  await _airBotsPool.connect();
+  _airBotsPool.on('error', (err) => console.error('[air-bots-db] pool error', err));
+  return _airBotsPool;
+}
+
+module.exports = { sql, getPool, getStagingPool, getAirBotsPool };

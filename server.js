@@ -51,11 +51,21 @@ app.use('/api/jobs',        safeRequire('./routes/jobs',        'jobs'));
 app.use('/api/bundles',     safeRequire('./routes/bundles',     'bundles'));
 app.use('/api/projects',    safeRequire('./routes/projects',    'projects'));
 
-// AIR Bots — substrate routes. Schema (`air.*` tables) awaiting Chip's review;
-// route files load fine even without DB schema. Calls error at request-time
-// if schema is missing, which is acceptable for v0.1 scaffolding.
+// AIR Bots — substrate routes. Schema (`air.*` tables) lives in the
+// AIR_Bots DB on vs-ims. Routes use getAirBotsPool from config/db.
 app.use('/api/air/agents',  safeRequire('./routes/air/agents',   'air-agents'));
 app.use('/api/air/runs',    safeRequire('./routes/air/runs',     'air-runs'));
+
+// AIR Bots — register built-in recipes at boot so the recipe handlers are
+// available to the runner. Each recipe file in lib/airRecipes/ self-
+// registers via airAgentRecipes.register() on require.
+try {
+  const airRecipes = require('./lib/airAgentRecipes');
+  const loaded = airRecipes.loadBuiltinRecipes();
+  console.log(`[startup] AIR Bots: loaded ${loaded} built-in recipe(s) (${airRecipes.list().map(r => r.name).join(', ') || 'none'})`);
+} catch (e) {
+  console.error('[startup] AIR Bots recipe loader failed:', e.message);
+}
 
 // Default route — serve login page
 app.get('/', (_req, res) => {

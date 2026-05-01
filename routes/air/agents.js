@@ -18,7 +18,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const { sql, getPool } = require('../../config/db');
+const { sql, getAirBotsPool: getPool } = require('../../config/db');
 const { requireAuth }  = require('../../middleware/auth');
 const { resolveTenantContext, requireTenant } = require('../../middleware/tenantContext');
 const { syncTenant } = require('../../lib/airAgentSync');
@@ -239,14 +239,31 @@ router.delete('/:agentUID', async (req, res) => {
 });
 
 /* ---------- MANUAL RUN ---------- */
-router.post('/:agentUID/run', async (_req, res) => {
-  // The fire-now trigger lives in lib/airAgentRunner.js (forthcoming).
-  // Stub returns 501 so the API surface is wired but the executor is
-  // intentionally not yet attached.
-  res.status(501).json({
-    error: 'Not implemented',
-    detail: 'airAgentRunner.runOnce() is the next slice — coming once Chip\'s schema is finalized.',
-  });
+const airAgentRunner = require('../../lib/airAgentRunner');
+
+router.post('/:agentUID/run', async (req, res) => {
+  try {
+    // Confirm the agent belongs to the current tenant before firing.
+    const pool = await getPool();
+    const ownR = await pool.request()
+      .input('t', sql.UniqueIdentifier, req.tenantUID)
+      .input('a', sql.UniqueIdentifier, req.params.agentUID)
+      .query('SELECT 1 FROM air.Agents WHERE Tenant_UID = @t AND Agent_UID = @a');
+    if (!ownR.recordset.length) {
+      return res.status(404).json({ error: 'Agent not found in current tenant' });
+    }
+
+    const runResult = await airAgentRunner.runOnce({
+      agentUID:    req.params.agentUID,
+      triggeredBy: 'MANUAL',
+      params:      req.body && req.body.params ? req.body.params : undefined,
+      dryRun:      !!(req.body && req.body.dryRun),
+    });
+
+    res.status(200).json({ run: runResult });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 module.exports = router;

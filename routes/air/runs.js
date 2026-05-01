@@ -14,7 +14,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const { sql, getPool } = require('../../config/db');
+const { sql, getAirBotsPool: getPool } = require('../../config/db');
 const { requireAuth }  = require('../../middleware/auth');
 const { resolveTenantContext, requireTenant } = require('../../middleware/tenantContext');
 
