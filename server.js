@@ -51,6 +51,12 @@ app.use('/api/jobs',        safeRequire('./routes/jobs',        'jobs'));
 app.use('/api/bundles',     safeRequire('./routes/bundles',     'bundles'));
 app.use('/api/projects',    safeRequire('./routes/projects',    'projects'));
 
+// AIR Bots — substrate routes. Schema (`air.*` tables) awaiting Chip's review;
+// route files load fine even without DB schema. Calls error at request-time
+// if schema is missing, which is acceptable for v0.1 scaffolding.
+app.use('/api/air/agents',  safeRequire('./routes/air/agents',   'air-agents'));
+app.use('/api/air/runs',    safeRequire('./routes/air/runs',     'air-runs'));
+
 // Default route — serve login page
 app.get('/', (_req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'login.html'));
