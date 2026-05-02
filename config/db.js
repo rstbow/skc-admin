@@ -143,4 +143,59 @@ async function getAirBotsPool() {
   return _airBotsPool;
 }
 
-module.exports = { sql, getPool, getStagingPool, getAirBotsPool };
+/**
+ * Project DB pool (vs-ims-project) — separate database on the SAME
+ * server as vs-ims-staging. Used by recipes that need to read tables
+ * living in vs-ims-project (e.g. tbl_PPA_SP_API_Report_Runs for the
+ * adaptive-source-window recipe).
+ *
+ * Azure SQL Database doesn't support cross-database 4-part references
+ * (Msg "Reference to database... is not supported in this version of
+ * SQL Server"). So we keep a dedicated pool per database.
+ *
+ * Env vars (all optional — default to the STAGING_DB_* values since
+ * skc_app_user typically has access to both DBs):
+ *   PROJECT_DB_SERVER   — defaults to STAGING_DB_SERVER -> ADMIN_DB_SERVER
+ *   PROJECT_DB_DATABASE — defaults to 'vs-ims-project'
+ *   PROJECT_DB_USER     — defaults to STAGING_DB_USER
+ *   PROJECT_DB_PASSWORD — defaults to STAGING_DB_PASSWORD
+ *
+ * If neither PROJECT_DB_USER nor STAGING_DB_USER is set, throws with a
+ * clear message.
+ */
+let _projectPool = null;
+
+async function getProjectPool() {
+  if (_projectPool && _projectPool.connected) return _projectPool;
+
+  const user     = process.env.PROJECT_DB_USER     || process.env.STAGING_DB_USER;
+  const password = process.env.PROJECT_DB_PASSWORD || process.env.STAGING_DB_PASSWORD;
+  if (!user || !password) {
+    throw new Error(
+      'Project DB pool not configured — set PROJECT_DB_USER + PROJECT_DB_PASSWORD ' +
+      '(or fall back via STAGING_DB_USER + STAGING_DB_PASSWORD) on the App Service.'
+    );
+  }
+
+  const config = {
+    server:   process.env.PROJECT_DB_SERVER   || process.env.STAGING_DB_SERVER || process.env.ADMIN_DB_SERVER,
+    database: process.env.PROJECT_DB_DATABASE || 'vs-ims-project',
+    user,
+    password,
+    options: {
+      encrypt: (process.env.PROJECT_DB_ENCRYPT ?? process.env.STAGING_DB_ENCRYPT ?? process.env.ADMIN_DB_ENCRYPT ?? 'true') === 'true',
+      trustServerCertificate: (process.env.PROJECT_DB_TRUST_CERT ?? process.env.STAGING_DB_TRUST_CERT ?? process.env.ADMIN_DB_TRUST_CERT ?? 'false') === 'true',
+      enableArithAbort: true,
+    },
+    pool: { max: 5, min: 0, idleTimeoutMillis: 30000 },
+    requestTimeout: 30000,
+    connectionTimeout: 30000,
+  };
+
+  _projectPool = new sql.ConnectionPool(config);
+  await _projectPool.connect();
+  _projectPool.on('error', (err) => console.error('[project-db] pool error', err));
+  return _projectPool;
+}
+
+module.exports = { sql, getPool, getStagingPool, getAirBotsPool, getProjectPool };
